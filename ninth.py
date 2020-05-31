@@ -2,6 +2,7 @@
 # then encodes using Opus, decodes using Opus
 # and plays the result
 
+import pdb
 import pyogg
 from pyogg import opus
 import numpy
@@ -27,12 +28,20 @@ frameSize = 512
 
 # Create a delay buffer for testing
 outBuf = numpy.zeros((48000*2,channels))
-outBufProduceIndex = 5000
+outBufProduceIndex = 24000
 
-
+debugCount = 0
 def callback(indata, outdata, samples, time, status):
-    global inBufs, activeBuffer, bufferIndex, frameSize, sampleSize, outBuf, outBufProduceIndex
+    global inBufs, activeBuffer, bufferIndex, frameSize, sampleSize, outBuf, outBufProduceIndex, debugCount
 
+    debugCount += 1
+
+    def pb(b):
+        for i in range(b.shape[0]):
+            print(i,":",b[i])
+
+    #pdb.set_trace()
+    
     # FIXME: What does this do?
     if status:
         print(status)
@@ -54,12 +63,15 @@ def callback(indata, outdata, samples, time, status):
     #print("samplesToCopy:", samplesToCopy)
     inBufs[activeBuffer][bufferIndex[activeBuffer]:frameSize] = \
         indata[0:samplesToCopy]
+        #[[debugCount,debugCount]] * samplesToCopy 
 
     # Copy the remaining samples to the other buffer
-    remainingSamples = sampleSize - frameSize
+    remainingSamples = sampleSize - samplesToCopy
     if remainingSamples > 0:
         inBufs[nonActiveBuffer][0:remainingSamples] = \
             indata[samplesToCopy:sampleSize]
+            #[[debugCount,debugCount],] * remainingSamples
+        bufferIndex[nonActiveBuffer] = remainingSamples
 
     # FIXME: Encode the active buffer
 
@@ -72,7 +84,7 @@ def callback(indata, outdata, samples, time, status):
     outdata[0:frameSize] = outBuf[0:frameSize]
 
     # Roll the delayed buffer
-    outBuf = numpy.roll(outBuf, -frameSize)
+    outBuf = numpy.roll(outBuf, -frameSize, axis=0)
 
     # MORE SIMPLE TEST
     # Copy the active buffer to the output
@@ -95,7 +107,7 @@ def callback(indata, outdata, samples, time, status):
 
 
 # Open a read-write stream
-duration = 30 # seconds
+duration = 60 # seconds
 with sd.Stream(channels=2, callback=callback):
     sd.sleep(int(duration * 1000))
 
