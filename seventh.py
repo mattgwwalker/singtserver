@@ -10,7 +10,7 @@ import numpy
 import ctypes
 from datetime import datetime
 import sounddevice as sd
-
+import time # sleep
 
 # Display the version of the Opus library
 version = opus.opus_get_version_string()
@@ -23,7 +23,7 @@ print("Opus library version: "+
 #filename = "gs-16b-1c-44100hz.opus"
 #filename = "gs-16b-2c-44100hz.opus"
 filename = "left-right-demo-5s.opus"
-
+#filename = "humm-120samples.opus"
 
 # Read the Opus file and place the PCM in a memory buffer
 print("Reading Opus file...")
@@ -86,7 +86,7 @@ with numpy.printoptions(threshold=numpy.inf):
 # source file was in the Opus format, our re-decoding should have an
 # identical number of samples.
 print("\nCreating Second Buffer...")
-buf2StorageType = (opus.opus_int16*opusFile.channels) * (samplesPerChannel)
+buf2StorageType = (opus.opus_int16*opusFile.channels) * samplesPerChannel
 buf2Storage = buf2StorageType()
 
 
@@ -184,47 +184,71 @@ def createDecoder(freq, channels):
 
 # Function to encode and then immediately re-decode using Opus
 def encodeThenDecode(npBufSource, npBufTarget, freq):
-    channels = npBufSource.shape[1]
     # Encoding
     # ========
+
+    # Extract the number of channels in the source
+    sourceChannels = npBufSource.shape[1]
+
+    
     # Create an encoder
     encoder = createEncoder(npBufSource, freq)
 
+    
     # Frame sizes are measured in number of samples.  There are only a
     # specified number of possible valid frame durations for Opus,
     # which (assuming a frequency of 48kHz) gives the following valid
     # sizes.
     frameSizes = [120, 240, 480, 960, 1920, 2880]
 
-    # Specify the desired frame size.  This will be used for the vast
-    # majority of the encoding, except at the end of the buffer (as
-    # there may not be sufficient data level to fill a frame.)
-    frameSize = frameSizes[0]
     
-    # 4,000 bytes is the recommended max frame size,
-    # but this is just 32kb/sec
-    maxDataBytes = opus.opus_int32(8000)
+    # Specify the desired frame size.  This will be used for the vast
+    # majority of the encoding, except possibly at the end of the
+    # buffer (as there may not be sufficient data left to fill a
+    # frame.)
+    frameSize = frameSizes[5]
 
-    # Storage space for the compressed frame
-    dataType = ctypes.c_ubyte * maxDataBytes.value
-    data = dataType() # Creates actual instance of the array
-    dataPtr = ctypes.cast(ctypes.pointer(data), ctypes.POINTER(ctypes.c_ubyte)) # maybe this should be ogg.c_uchar_p
 
+    # Function to calculate the size of a frame in bytes
+    def frameSizeBytes(frameSize):
+        global bytesPerSample
+        return frameSize * sourceChannels * bytesPerSample
+
+    
+    # Allocate storage space for the encoded frame.  4,000 bytes is
+    # the recommended maximum buffer size for the encoded frame.
+    maxEncodedFrameBytes = opus.opus_int32(4000)
+    encodedFrameType = ctypes.c_ubyte * maxEncodedFrameBytes.value
+    encodedFrame = encodedFrameType()
+
+
+    # Create a pointer to the first byte of the buffer for the encoded
+    # frame.
+    encodedFramePtr = ctypes.cast(ctypes.pointer(encodedFrame),
+                                  ctypes.POINTER(ctypes.c_ubyte))
+
+    
     # Number of bytes to process in buffer
     bytesPerSample = 2
     lengthBytes = buf.shape[0] * buf.shape[1] * bytesPerSample
 
+    
     # Decoding
     # ========
+
+    # Extract the number of channels for the target
+    targetChannels = npBufTarget.shape[1]
+
+
+    # Create a decoder
     decoderFreq = 48000 # TODO: Test changes to this
-    decoderChannels = 2 # FIXME: Can this be changed to 1?
     decoderPtr = createDecoder(decoderFreq,
-                               decoderChannels)
+                               targetChannels)
                                        
     
     
-    # Encode and decode the audio
-    # ===========================
+    # Encode and re-decode the audio
+    # ==============================
 
     # Pointer to a location in the source buffer.  We will increment
     # this as we progress through the encoding of the buffer.  It
@@ -243,51 +267,86 @@ def encodeThenDecode(npBufSource, npBufTarget, freq):
     targetPtr = npBufTarget.ctypes.data_as(ctypes.c_void_p)
     
 
-    # Loop through the source buffer 
+    # Loop through the source buffer
+    count = 0 # FIXME: debugging only 
     while bytesProcessed < lengthBytes:
+        print("processing frame: ",count)
+        count += 1
         print("Processing frame at sourcePtr ", sourcePtr.value)
 
-        # Encode the audio
-        numBytes = opus.opus_encode(
-            encoder,
-            ctypes.cast(sourcePtr, ctypes.POINTER(opus.opus_int16)),
-            frameSize,
-            dataPtr,
-            maxDataBytes
-        )
+    
+        # Check if we have enough source data remaining to process at
+        # the current frame size
+        print("lengthBytes: ",lengthBytes)
+        print("bytesProcessed: ",bytesProcessed)
+        print("lengthBytes - bytesProcessed:",lengthBytes - bytesProcessed)
+        print("frameSizeBytes(frameSize):", frameSizeBytes(frameSize))
+        if lengthBytes - bytesProcessed < frameSizeBytes(frameSize):
+            print("Warning! Not enough data for last frame")
+            # FIXME: The last frame needs to have the end data plus zeros padded
+            break
 
-        # Check for any errors during encoding
-        if numBytes < 0:
-            raise Exception("Encoder error detected: "+
-                            opus.opus_strerror(numBytes).decode("utf"))
         
+        
+        # Encode the audio
+        if True:
+            # Print out the PCM data to see that it's readable
+            #p = sourcePtr
+            #d = 0
+            #while d < frameSize*2*2:
+            #    p2 = ctypes.c_void_p(ctypes.cast(p,ctypes.c_void_p).value + d)
+            #    print("p[",p2.value,"]:",ctypes.cast(p2, opus.opus_int16_p).contents.value)
+            #    d += 2
+
+                
+            print("Encoding audio")
+            numBytes = opus.opus_encode(
+                encoder,
+                ctypes.cast(sourcePtr, ctypes.POINTER(opus.opus_int16)),
+                frameSize,
+                encodedFramePtr,
+                maxEncodedFrameBytes
+            )
+            print("numBytes: ", numBytes)
+        
+            # Check for any errors during encoding
+            if numBytes < 0:
+                raise Exception("Encoder error detected: "+
+                                opus.opus_strerror(numBytes).decode("utf"))
+        
+            # Move to next position in the buffer: encoder
+            oldAddress = sourcePtr.value
+            #print("oldAddress:",oldAddress)
+            deltaBytes = frameSize*sourceChannels*2
+            newAddress = oldAddress + deltaBytes
+            #print("newAddress:",newAddress)
+            sourcePtr = ctypes.c_void_p(newAddress)
+
+            bytesProcessed = sourcePtr.value - sourcePtr_init.value
+
         # Decode the audio
-        numSamples = opus.opus_decode(decoderPtr,
-                                      dataPtr,
-                                      numBytes,
-                                      ctypes.cast(targetPtr, ctypes.POINTER(ctypes.c_short)),
-                                      5760, # Max space required in PCM
-                                      0 # What's this about?
-                                      )
-        print("numSamples: ",numSamples)
+        if True:
+            print("Decoding audio")
+            numSamples = opus.opus_decode(decoderPtr,
+                                          encodedFramePtr,
+                                          numBytes,
+                                          ctypes.cast(targetPtr, ctypes.POINTER(ctypes.c_short)),
+                                          5760, # Max space required in PCM
+                                          0 # What's this about?
+            )
+            print("numSamples: ",numSamples)
+        
+            # Check for any errors during decoding
+            if numSamples < 0:
+                raise Exception("Decoder error detected: "+
+                                opus.opus_strerror(numSamples).decode("utf"))
 
-        # Check for any errors during decoding
-        if numSamples < 0:
-            raise Exception("Decoder error detected: "+
-                            opus.opus_strerror(numSamples).decode("utf"))
+            # Move to next position in the buffer: decoder
+            targetPtr.value += numSamples*targetChannels*2
+
+            
 
 
-        bytesProcessed = sourcePtr.value - sourcePtr_init.value
-        # Move to next position in the buffer: encoder
-        oldAddress = sourcePtr.value
-        #print("oldAddress:",oldAddress)
-        deltaBytes = frameSize*channels*2
-        newAddress = oldAddress + deltaBytes
-        #print("newAddress:",newAddress)
-        sourcePtr = ctypes.c_void_p(newAddress)
-
-        # Move to next position in the buffer: decoder
-        targetPtr.value += numSamples*channels*2
 
     
 
