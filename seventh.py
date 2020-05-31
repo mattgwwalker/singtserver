@@ -22,8 +22,8 @@ print("Opus library version: "+
 #filename = "ff-16b-2c-44100hz.opus"
 #filename = "gs-16b-1c-44100hz.opus"
 #filename = "gs-16b-2c-44100hz.opus"
-filename = "left-right-demo-5s.opus"
-#filename = "humm-120samples.opus"
+#filename = "left-right-demo-5s.opus"
+filename = "humm-120samples.opus"
 
 # Read the Opus file and place the PCM in a memory buffer
 print("Reading Opus file...")
@@ -206,7 +206,8 @@ def encodeThenDecode(npBufSource, npBufTarget, freq):
     # majority of the encoding, except possibly at the end of the
     # buffer (as there may not be sufficient data left to fill a
     # frame.)
-    frameSize = frameSizes[5]
+    frameSizeIndex = 5
+    frameSize = frameSizes[frameSizeIndex]
 
 
     # Function to calculate the size of a frame in bytes
@@ -279,14 +280,25 @@ def encodeThenDecode(npBufSource, npBufTarget, freq):
         # the current frame size
         print("lengthBytes: ",lengthBytes)
         print("bytesProcessed: ",bytesProcessed)
-        print("lengthBytes - bytesProcessed:",lengthBytes - bytesProcessed)
+        print("bytes remaining (lengthBytes - bytesProcessed):",lengthBytes - bytesProcessed)
         print("frameSizeBytes(frameSize):", frameSizeBytes(frameSize))
-        if lengthBytes - bytesProcessed < frameSizeBytes(frameSize):
-            print("Warning! Not enough data for last frame")
-            # FIXME: The last frame needs to have the end data plus zeros padded
-            break
+        while lengthBytes - bytesProcessed < frameSizeBytes(frameSize):
+            print("Warning! Not enough data for frame.")
+            frameSizeIndex -= 1
+            if frameSizeIndex < 0:
+                # The data is less than the smallest number of samples
+                # in a frame.  Either we ignore the remaining samples
+                # and shorten the audio, or we pad the frame with
+                # zeros and lengthen the audio.  We'll take the easy
+                # option and shorten the audio.
+                break
+            frameSize = frameSizes[frameSizeIndex]
+            print("Decreased frame size to ",frameSize)
 
-        
+        if frameSizeIndex < 0:
+            print("Warning! Ignoring samples at the end of the audio\n"+
+                  "as they do not fit into even the smallest frame.")
+            break
         
         # Encode the audio
         if True:
