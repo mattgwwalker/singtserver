@@ -11,15 +11,15 @@ import ctypes
 from datetime import datetime
 import sounddevice as sd
 import time # sleep
+import threading
 
 
-
-
+event = threading.Event()
 
 #filename = "ff-16b-2c-44100hz.opus"
-#filename = "gs-16b-2c-44100hz.opus"
+filename = "gs-16b-2c-44100hz.opus"
 #filename = "gs-16b-1c-44100hz.opus"
-filename = "left-right-demo-5s.opus"
+#filename = "left-right-demo-5s.opus"
 
 print("Reading Opus file...")
 opus_file = pyogg.OpusFile(filename)
@@ -75,20 +75,20 @@ buffer = rescale(buffer, 0.5)
 
 
 # Detect the maximum volume of the microphone during example usage
-maxAbsInput = 0
+max_abs_input = 0
 def detectMax(indata, frames, time, status):
     """This is called (from a separate thread) for each audio block."""
-    global maxAbsInput
+    global max_abs_input
     
     if status:
         print(status, file=sys.stderr)
 
-    maxAbsFrame = get_max_abs_volume(indata)
+    max_abs_frame = get_max_abs_volume(indata)
     
-    if maxAbsFrame > maxAbsInput:
+    if max_abs_frame > max_abs_input:
         print("Peak detected at",
-              round(100 * maxAbsFrame, 1),"% of input's full scale")
-        maxAbsInput = maxAbsFrame
+              round(100 * max_abs_frame, 1),"% of input's full scale")
+        max_abs_input = max_abs_frame
 
 
 
@@ -98,6 +98,11 @@ print("\nPlease use the microphone at the loudest level you expect.")
 print("You have", duration, "seconds...")
 with sd.InputStream(callback=detectMax, dtype=numpy.float32):
     sd.sleep(int(duration * 1000))
+
+
+# Check that we've got an acceptable gain
+if (max_abs_input < 0.03):
+    raise Exception("Extremely low gain detected; aborting.")
 
     
 # Index into audio buffer so that we know what we're playing next
@@ -114,7 +119,7 @@ def callback(indata, outdata, samples, time, status):
 
     # Scale input to be at 50% of anticipated full scale
     indata = (indata.astype(numpy.float32)
-              / maxAbsInput
+              / max_abs_input
               * 0.5)
             
     # Mix the input and audio together by simply adding the two
@@ -125,25 +130,31 @@ def callback(indata, outdata, samples, time, status):
         outdata[:] = indata + buffer[bufferIndex : bufferIndex+len(indata)]
         bufferIndex += len(indata)
     else:
-        audio = (buffer[bufferIndex : len(buffer)]
-                 + [0.0, 0.0] * (bufferIndex+len(indata) - len(buffer)))
-        outdata[:] = indata + audio
+        samplesRemaining = len(buffer) - bufferIndex
+        outdata[:samplesRemaining] = buffer[bufferIndex : len(buffer)]
+        outdata[samplesRemaining:] = [[0.0, 0.0]] * (len(indata) - samplesRemaining)
         bufferIndex = len(buffer)
 
-    if bufferIndex == len(buffer):
+    if bufferIndex >= len(buffer):
+        print("Stopping")
         raise sd.CallbackStop
 
-                 
+    if stream.cpu_load > 0.2:
+        print("CPU Load above 20% during playback")
 
 
 # Open a read-write stream
-duration = 10 # seconds
-with sd.Stream(channels=2,
-               dtype=numpy.float32,
-               latency="low",
-               callback=callback):
-    sd.sleep(int(duration * 1000))
-
+start_time = datetime.now()
+stream = sd.Stream(samplerate=48000,
+                   channels=2,
+                   dtype=numpy.float32,
+                   latency="low",
+                   callback=callback,
+                   finished_callback=event.set)
+with stream:
+    event.wait()  # Wait until playback is finished
+end_time = datetime.now()
+print("Duration:", end_time - start_time)
 
 # Done!
 print("Finished.")
