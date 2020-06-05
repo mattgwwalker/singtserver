@@ -1,0 +1,226 @@
+<html>
+
+  <head>
+    <title>Virtual Choir Server</title>
+  </head>
+
+  <body>
+    <h1>Virtual Choir Server: Mockup Interface</h1>
+
+    <p>This is an instance of our Virtual Choir Server software;
+    version 0.1.  This software creates a virtual rehearsal space
+    where people can talk and sing together.  This software accepts
+    connections from the Virtual Choir Client.</p>
+
+    <h2>Connecting</h2>
+
+    <p>In order for people to be able to connect to this server, you
+    will need to share the connection details.  This could be done,
+    for example, by email.  Copy the text in the box below and send it
+    to all those who you would like to join this space.</p>
+
+    <p>Connection details: <input type="text"></p>
+
+    <h2>Participants</h2>
+
+    <p>The following people are currently connected to this
+      server:</p>
+
+    <ul>
+      <li>Amy</li>
+      <li>Marie-Claire</li>
+      <li>Virginie</li>
+    </ul>
+
+    
+    <h2>Backing Tracks</h2>
+
+    <p>In order to sing in time together, a backing track is required
+    (at least for the first take).  These need to be uploaded to the
+    server encoded either in wav or Opus formats.</p>
+
+    <p>[A future version will allow a participant (including the
+    conductor) to record themselves singing and for that to be used
+    live instead of a backing track.]</p>
+
+    <p>To upload a backing track, first specify the name of the piece
+      in the box below:</p>
+
+    <p>Name: <input type="text"></p>
+
+    <p>Next, select the file to upload:</p>
+
+    <input type="file">
+
+    <p>When you're ready, press the upload button.</p>
+
+    <button>Upload</button>
+
+    <p>The following music has been uploaded:</p>
+
+    <ul>
+      <li>Happy Birthday</li>
+      <li>Edelweiss</li>
+    </ul>
+
+    
+    <h2>States</h2>
+    
+    <p>The default state for a rehearsal space is "discussion".  In
+    this state conversations are real-time: everyone can talk to
+    everyone else (assuming their microphones are live and
+    unmuted).</p>
+
+    <p>The other state for the space is "recording".  In this state:
+      <ul>
+	<li>if their microphone is unmuted and live, a participant
+	  will be able to hear the backing track (and themselves, if
+	  they enable monitoring on their client).  They will be
+	  recorded in high quality and that recording will be sent in
+	  real-time to the server.</li>
+	<li>otherwise, a participant will be able to hear everyone
+	  else singing in real time (and synchronised).</li>
+      </ul>
+
+    <p>This rehearsal space is currently in the "discussion"
+      state.</p>
+
+    
+    <h2>Live Microphones</h2>
+
+    <p>By default, all participants will have live microphones for
+    both "discussion" and "recording" states.  However, it is
+    sometimes desireable to turn this off for some participants.</p>
+    
+    <p>Participants may be marked as live independently for the
+      "discussion" and "recording" states.</p>
+
+    <p>It is intended that non-singing conductors should be marked as
+    non-live for the recording state.  That way, the system will
+    automatically start real-time listening for the conductor when a
+    recording is started.</p>
+
+    <p>Naughty children who won't stop disrupting the rehearsal can
+    have their discussion rights removed, and maybe even their recording
+    rights removed too.</p>
+    
+    <p>Participants whose microphones are not marked as live for the
+    "discussion" state will be able to hear but not be heard during
+    discussions.  (This is irrespectively of the mute/unmute state of
+    their microphone; to be heard a participant's microphone must be
+    both live and unmuted.)</p>
+
+    <p>Participants whose microphones are not marked as live for the
+    "recording" state will be able to hear the others singing
+    (synchronised) in real-time.</p>
+    
+    <p>To mark a participant as a non-live listener, deselect the
+      checkbox beside their name in the list below:</p>
+
+    <p>Live microphones:</p>
+
+    <table>
+      <tr><th>Name</th><th>Discussion</th><th>Recording</th></tr>
+      <tr><td>Amy</td><td><input type="checkbox"></td><td><input type="checkbox"></td></tr>
+      <tr><td>Marie-Claire</td><td><input type="checkbox"></td><td><input type="checkbox"></td></tr>
+      <tr><td>Virginie</td><td><input type="checkbox"></td><td><input type="checkbox"></td></tr>
+    </table>
+    
+    
+
+    <h2>Recording</h2>
+    
+    <p>To start a recording, select either a backing track, or a
+      previous take, or one of each, then press the "Record" button.</p>
+
+    <p>Backing track:
+      <select>
+	<option>None</option>
+	<option>Happy Birthday</option>
+	<option>Edelweiss</option>
+      </select>
+    </p>
+
+    <p>Previous take:
+      <select>
+	<option>None</option>
+	<option>Happy Birthday - Take 1</option>
+      </select>
+    </p>
+
+    <button>Record</button>
+
+    <p>To stop a recording part way through, press the "Stop
+      Recording" button.</p>
+
+    <button>Stop Recording</button>
+
+    <p>The rehearsal space is currently in the "discussion" state; it
+    is not in the "recording" state.</p>
+
+
+    <h2>Playback</h2>
+    
+    <p>During the "discussion" state, backing tracks and recordings
+    can be played back for everyone to hear.  Participants (whose
+    microphones are live and unmuted) may talk over the top of the
+    playback.  To play back audio, select a backing track, a take, or
+    one of each, and press the "Play for Everyone" button.</p>
+
+    <p>Backing track:
+      <select>
+	<option>None</option>
+	<option>Happy Birthday</option>
+	<option>Edelweiss</option>
+      </select>
+    </p>
+
+    <p>Take:
+      <select>
+	<option>None</option>
+	<option>Happy Birthday - Take 1</option>
+      </select>
+    </p>
+
+    <button>Play for Everyone</button>
+
+    <p>To stop play back, press the "Stop Playback" button.</p>
+
+    <button>Stop Playback</button>
+
+    <p>Nothing is currently being played.</p>
+    
+    <h2>Downloading</h2>
+
+    <p>You may download an archive of all the recordings in a take.
+    The tracks from each of the participants who recorded during that
+    take will be combined into a zip file.  Select the take that you
+    would like to download and press the "Download" button.</p>
+
+    <p><strong>Warning:</strong> Takes that are not downloaded will be
+      deleted when the rehearsal is closed.</p>
+
+    <p>Take:
+      <select>
+	<option>Happy Birthday - Take 1</option>
+      </select>
+    </p>
+
+    <button>Download</button>
+
+    
+    <h2>Closing</h2>
+
+    <p>At the end of the rehearsal and once all the desired recordings
+    have been successfully downloaded, the rehearsal must be closed.
+    Failure to close the rehearsal will mean that it stays open and
+    continues to incur charges.  Press the "Close Rehearsal" button to
+    close the rehearsal.</p>
+
+    <button>Close Rehearsal</button>
+
+      
+    
+  </body>
+  
+</html>
