@@ -13,6 +13,7 @@ import sounddevice as sd
 import time
 from opus_helpers import create_encoder
 import struct
+import random
 
 # Step one, get PCM data from a Ogg Opus file
 # ===========================================
@@ -20,8 +21,8 @@ import struct
 # Specify the file containing Opus audio
 #filename = "ff-16b-2c-44100hz.opus"
 #filename = "gs-16b-1c-44100hz.opus"
-#filename = "gs-16b-2c-44100hz.opus"
-filename = "left-right-demo-5s.opus"
+filename = "gs-16b-2c-44100hz.opus"
+#filename = "left-right-demo-5s.opus"
 
 
 # Read the Opus file and place the PCM in a memory buffer
@@ -226,26 +227,46 @@ class SendOpusStream(DatagramProtocol):
 
 
         sequence_no = 0
+
+        store = []
         
         # TODO: Implement this!
         while True:
             source_ptr, encoded_frame_ptr, num_bytes = encode_next_frame(source_ptr)
 
-            # Create numpy array from encoded frame
-            np_frame = numpy.ctypeslib.as_array(
-                encoded_frame_ptr,
-                (num_bytes,)
-            )
-
             # INEFFICIENT: Insert timestamp and sequence number before
-            # encoded frame
+            # encoded frame (copies encoded frame)
             current_time = int(time.monotonic()*1000) % (2**32-1)
             timestamp = struct.pack(">I", current_time)
-            packet = timestamp + bytes(ctypes.c_short(sequence_no)) + bytes(encoded_frame_ptr[0:num_bytes])
-            sequence_no += 1
-            
-            self.transport.write(packet)
+            packet = (timestamp
+                      + bytes(ctypes.c_short(sequence_no))
+                      + bytes(encoded_frame_ptr[0:num_bytes]))
+
+            # TEST: What happens if not all packets are delivered?
+            if random.random() <= 0:
+                # Discard
+                print("Discarding")
+                pass
+            elif random.random() <= 0.7:
+                # Reorder
+                print("Reordering")
+                store.append(packet)
+            else:
+                print("Sending")
+                # Send
+                self.transport.write(packet)
+
+                # Send all stored packets
+                for p in random.sample(store, k=len(store)):
+                    self.transport.write(p)
+
+                store = []
+                    
+
+            #self.transport.write(packet)
             #break #FIXME
+
+            sequence_no += 1
 
             
     def datagramReceived(self, data, addr):
