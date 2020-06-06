@@ -23,47 +23,63 @@ import random
 # Automatic gain for the "discussion" mode can come later.  For the
 # meantime, measure peak usage while talking loudly before we start.
 
+class ConfigureGain:
+    def __init__(self):
+        self.__max_abs_input = 0
 
-# Calculate maximum absolute volume of a buffer
-def get_max_abs_volume(buffer):
-    max_volume = numpy.amax(buffer)
-    min_volume = numpy.amin(buffer)
+        
+    # Calculate maximum absolute volume of a buffer
+        
+    # TODO: This shoud probably be part of a library outside of this
+    # class.  Maybe consider pysox?
+    def get_max_abs_volume(np_buffer):
+        max_volume = numpy.amax(np_buffer)
+        min_volume = numpy.amin(np_buffer)
 
-    max_abs_volume = max(max_volume,
-                         -min_volume)
+        max_abs_volume = max(max_volume,
+                             -min_volume)
 
-    return max_abs_volume
-
-
-# Detect the maximum volume of the microphone during example usage
-max_abs_input = 0
-def detectMax(indata, frames, time, status):
-    """This is called (from a separate thread) for each audio block."""
-    global max_abs_input
-    
-    if status:
-        print(status, file=sys.stderr)
-
-    max_abs_frame = get_max_abs_volume(indata)
-    
-    if max_abs_frame > max_abs_input:
-        print("Peak detected at",
-              round(100 * max_abs_frame, 1),"% of input's full scale")
-        max_abs_input = max_abs_frame
-
-# Measure the expected maximum volume of microphone's input
-duration = 2 # seconds
-print("\nPlease use the microphone at the loudest level you expect.")
-print("You have", duration, "seconds...")
-with sd.InputStream(callback=detectMax, dtype=numpy.float32):
-    sd.sleep(int(duration * 1000))
+        return max_abs_volume
 
 
-# Check that we've got an acceptable gain
-if (max_abs_input < 0.03):
-    raise Exception("Extremely low gain detected; aborting.")
+    # Createa a callback that detects the maximum volume of the
+    # microphone during example usage
+    def make_detect_max(self):
+        def detect_max(indata, frames, time, status):
+            """This is called (from a separate thread) for each audio block."""
+            nonlocal self
+
+            if status:
+                print(status, file=sys.stderr)
+
+            max_abs_frame = ConfigureGain.get_max_abs_volume(indata)
+
+            if max_abs_frame > self.__max_abs_input:
+                print("Peak detected at",
+                      round(100 * max_abs_frame, 1),"% of input's full scale")
+                self.__max_abs_input = max_abs_frame
+
+        return detect_max
+
+    def run(self):
+        # Measure the expected maximum volume of microphone's input
+        duration = 2 # seconds
+        print("\nPlease use the microphone at the loudest level you expect.")
+        print("You have", duration, "seconds...")
+        with sd.InputStream(
+                callback=self.make_detect_max(),
+                dtype=numpy.float32):
+            sd.sleep(int(duration * 1000))
 
 
+        # Check that we've got an acceptable gain
+        if (self.__max_abs_input < 0.03):
+            raise Exception("Extremely low gain detected; aborting.")
+
+        
+
+instance = ConfigureGain()
+instance.run()
 
 exit()
 
