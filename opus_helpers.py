@@ -1,5 +1,8 @@
 from pyogg import opus
+from pyogg import ogg
 import ctypes
+import random
+
 
 def create_decoder(freq, channels):
     # To create a decoder, we must first allocate resources for it.
@@ -84,3 +87,26 @@ def create_encoder(npBufSource, samples_per_second):
 
     # Return our newly-created encoder
     return encoder
+
+
+def create_random_serial_no():
+    bytes_in_int = ctypes.sizeof(ctypes.c_int)
+    min_int = -2**(bytes_in_int*8-1)
+    max_int = 2**(bytes_in_int*8-1)-1
+    serial_no = ctypes.c_int(random.randint(min_int, max_int))
+
+    return serial_no
+
+
+def create_stream_state():
+    # Create a random serial number
+    serial_no = create_random_serial_no()
+    
+    # Create an ogg_stream_state
+    ogg_stream_state = ogg.ogg_stream_state()
+
+    # Initialise the stream state
+    ogg.ogg_stream_init(ctypes.pointer(ogg_stream_state),
+                        serial_no)
+
+    return ogg_stream_state
