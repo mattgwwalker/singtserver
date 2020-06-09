@@ -8,6 +8,8 @@ import numpy
 import ctypes
 import threading
 from opus_helpers import create_encoder
+from frame_buffer import FrameBuffer
+
 
 class RecordingMode:
     def __init__(self):
@@ -25,10 +27,7 @@ class RecordingMode:
             # Open the starting sound file and store it as PCM buffer
             opus_file = pyogg.OpusFile(self.__starting_sound_filename)
             self.__starting_sound_pcm = opus_file.as_array()
-
-            # TEST Convert to float
             self.__starting_sound_pcm = self.__starting_sound_pcm.astype(numpy.float32) / (2**15)
-            print("max: ",numpy.amax(self.__starting_sound_pcm))
 
 
             
@@ -52,6 +51,7 @@ class RecordingMode:
             # Open the backing track and store it as PCM buffer
             opus_file = pyogg.OpusFile(backing_track_filename)
             self.__backing_track_pcm = opus_file.as_array()
+            self.__backing_track_pcm = self.__backing_track_pcm.astype(numpy.float32) / (2**15)
 
             # Create an encoder
             self.__encoder = create_encoder(
@@ -64,6 +64,8 @@ class RecordingMode:
         # Define the stream's callback
         def callback(indata, outdata, samples, time, status):
             nonlocal step_no, current_pos, stream, warmup_samples
+            nonlocal samples_per_frame
+            
             
             if status:
                 print(status)
@@ -108,19 +110,57 @@ class RecordingMode:
 
                     # Warm-up the encoder.  See "Encoder Guidelines"
                     # at https://tools.ietf.org/html/rfc7845#page-27
-                    #frame_buffer.append(indata)
-                    #if frame_buffer.size() >= frame_size:
-                    #    # TODO: Pass the frame onto another thread for processing
-                    #    pass
+                    frame_buffer.put(indata)
+                    if frame_buffer.size() >= samples_per_frame:
+                        # TODO: Pass the frame onto another thread for processing
+                        pass
 
                     if current_pos >= warmup_samples:
-                        print("Finished warming up the encoder")
+                        print("Finished warming up the encoder; moving to next step")
                         step_no += 1
                         warmup_samples = current_pos
                         current_pos = 0
                     
 
                 elif step_no == 2:
+                    # Play backing track and record voice
+                    # Copy the backing track to the output
+                    remaining = len(self.__backing_track_pcm) - current_pos
+                    if remaining >= samples:
+                        outdata[:] = self.__backing_track_pcm[
+                            current_pos : current_pos+samples
+                        ]
+                    else:
+                        # Copy what's left of the backing track, and fill
+                        # the rest with silence
+                        outdata[:remaining] = self.__backing_track_pcm[
+                            current_pos : len(self.__backing_track_pcm)
+                        ]
+                        outdata[remaining:samples] = [[0.0, 0.0]] * (samples-remaining)
+
+                    # Adjust the position
+                    current_pos += samples
+
+                    if current_pos >= len(self.__backing_track_pcm):
+                        print("Finished playing backing track; moving to next step")
+                        step_no += 1
+                        current_pos = 0
+
+                elif step_no == 3:
+                    # Play one frame's worth of silence, just to
+                    # ensure we can keep the frame size constant.
+                    outdata[:] = [[0.0, 0.0]] * samples
+                    current_pos += samples
+
+                    # TODO: Encode
+                    
+                    if current_pos >= warmup_samples:
+                        print("Finished playing a frame's worth of silence; moving to next step")
+                        step_no += 1
+                        current_pos = 0
+                    
+
+                else:
                     print("Stopping")
                     raise sd.CallbackStop
                     
@@ -152,11 +192,19 @@ class RecordingMode:
             raise Exception("Failed in OPUS_GET_LOOKAHEAD_REQUEST")
         delay_samples = delay.value
 
-        # The encoder guidelines recommends that at least an extra 120
+        # The encoder guidelines recommend that at least an extra 120
         # samples is added to delay_samples.  See
         # https://tools.ietf.org/html/rfc7845#page-27
         extra_samples = 120
         warmup_samples = delay_samples + extra_samples 
+
+        # Create a buffer capable of holding two frames 
+        samples_per_frame = 960
+        channels = 2
+        frame_buffer = FrameBuffer(
+            2*samples_per_frame,
+            channels
+        )
 
         
         # Create an event for communication between threads
@@ -167,7 +215,7 @@ class RecordingMode:
         print("Creating stream")
         stream = sd.Stream(
             samplerate=48000,
-            channels=2,
+            channels=channels,
             dtype=numpy.float32,
             latency="low",
             callback=callback,
