@@ -9,7 +9,7 @@ Csh_freq = A_freq * 2 ** (4 / 12)
 E_freq = A_freq * 2 ** (7 / 12)
 
 # get timesteps for each sample, T is note duration in seconds
-sample_rate = 44100
+sample_rate = 48000
 T = 0.25
 t = np.linspace(0, T, int(T * sample_rate), False)
 
@@ -35,6 +35,6 @@ play_obj.wait_done()
 wave_write = wave.open('sound.wav','wb')
 wave_write.setnchannels(1) # mono
 wave_write.setsampwidth(2) # bytes
-wave_write.setframerate(44100.0) # hertz
+wave_write.setframerate(sample_rate) # hertz
 wave_write.writeframes(audio)
 wave_write.close()
