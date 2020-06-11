@@ -14,7 +14,16 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
     # Generate the tones required.  Assumes no blocksize will be
     # greater than one second.  Frequencies chosen from mid-points of
     # FFT analysis.
+    fft_n = 256 # Approximately 5ms at 48kHz
+    fft_freqs = numpy.fft.rfftfreq(fft_n) * samples_per_second
     freqs = [375, 1125, 2250]
+
+    # Get index of desired frequencies
+    freq_indices = []
+    for freq in freqs:
+        indices = numpy.where(fft_freqs == freq)
+        assert len(indices) == 1
+        freq_indices.append(indices[0][0])
 
     duration = 1.0 # seconds
     t = numpy.linspace(0, duration, int(duration * samples_per_second), False)
@@ -34,11 +43,24 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
 
     # Initialise the current position for each tone
     tone_positions = [0] * len(tones)
+
+
+    # Allocate space for recording
+    max_recording_duration = 10 #seconds
+    max_recording_samples = max_recording_duration * samples_per_second
+    rec_pcm = numpy.zeros((
+        max_recording_samples,
+        input_channels
+    ))
+
+    # Initialise recording position
+    rec_position = 0
         
+    
     # Callback for when the recording buffer is ready.  The size of the
     # buffer depends on the latency requested.
     def callback(indata, outdata, samples, time, status):
-        global bufferIndex
+        nonlocal rec_position, tone_positions
 
         if status:
             print(status)
@@ -59,8 +81,46 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
             )
             tone_positions[0] = samples-remaining
 
-    # Play first tone
+            
+        # Store the recording
+        rec_pcm[rec_position:rec_position+samples] = indata[:]
+        rec_position += samples
 
+        # If we have more than the required number of samples
+        # recorded, execute FFT analysis
+        fft_n = 256 # about 5ms at 48kHz
+        if rec_position > fft_n:
+            data = rec_pcm[rec_position-256:rec_position]
+            data_transpose = data.transpose()
+            left = data_transpose[0]
+            right = data_transpose[1]
+            mono = left+right
+                        
+            sp = numpy.fft.rfft(
+                mono,
+                n=fft_n
+            )
+            sp = numpy.abs(sp)
+            db = 20*numpy.log10(sp / sp.max())
+
+            dbs = []
+            for freq_index in freq_indices:
+                y = db[freq_index]
+                dbs.append(y)
+
+            mean = numpy.mean(db)
+            decision = dbs[0] - 30 > mean
+            print(decision, numpy.mean(db), dbs)
+            #raise sd.CallbackAbort
+
+            
+            
+            
+        # Detect the tone
+        
+
+            
+    # Play first tone
     # Open a read-write stream
     stream = sd.Stream(samplerate=48000,
                        channels=2,
@@ -109,6 +169,10 @@ def measure_latency():
     print("Do not move the microphone or output device once the system can hear the constant tone.")
     print("Do not make any noise during this measurement.")
     print("")
+    print("Press enter to start.")
+    print("")
+
+    input() # wait for enter key
     
     approximate_latency = phase_one()
     accurate_latency = phase_two(approximate_latency)
