@@ -11,9 +11,8 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
     """Channels are specified as a tuple of (input channels, output channels)."""
     input_channels, output_channels = channels
 
-    # Generate the tones required.  Assumes no blocksize will be
-    # greater than one second.  Frequencies chosen from mid-points of
-    # FFT analysis.
+    # Generate the tones required.  Frequencies chosen from mid-points
+    # of FFT analysis.
     fft_n = 256 # Approximately 5ms at 48kHz
     fft_freqs = numpy.fft.rfftfreq(fft_n) * samples_per_second
     freqs = [375, 1125, 2250]
@@ -25,7 +24,10 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
         assert len(indices) == 1
         freq_indices.append(indices[0][0])
 
-    duration = 1.0 # seconds
+    # FIXME: This duration should be shorter, but it needs to finish
+    # at a zero-crossing of the sine wave.  A quick fix is just to
+    # make the duration much longer than it needs to be.
+    duration = 10.0 # seconds
     t = numpy.linspace(0, duration, int(duration * samples_per_second), False)
 
     tones = []
@@ -40,7 +42,12 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
 
         del tone
 
-
+        
+    # Normalise the tones so that when combined they'll never clip
+    for index,tone in enumerate(tones):
+        tones[index] = tone / len(tones)
+        
+        
     # Initialise the current position for each tone
     tone_positions = [0] * len(tones)
 
@@ -55,6 +62,10 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
 
     # Initialise recording position
     rec_position = 0
+
+    # Initialise tones detected, which stores the number of samples
+    # for which the tone has been continuously detected.
+    tones_detected = [0 for _ in tones]
         
     
     # Callback for when the recording buffer is ready.  The size of the
@@ -65,7 +76,7 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
         if status:
             print(status)
 
-        # Play the tone
+        # Play the background tone (tone #0)
         if tone_positions[0]+samples <= len(tones[0]):
             # Copy tone in one hit
             outdata[:] = tones[0][tone_positions[0]:tone_positions[0]+samples]
@@ -81,14 +92,35 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
             )
             tone_positions[0] = samples-remaining
 
+
+        # If the background tone is detected, then we need to start
+        # measuring latency
+        if tones_detected[0] > 0.5*samples_per_second:
+            # For the moment, just play the second tone
+            print("Playing second tone")
+            if tone_positions[1]+samples <= len(tones[1]):
+                # Copy tone in one hit
+                outdata[:] += tones[1][tone_positions[1]:tone_positions[1]+samples]
+                tone_positions[1] += samples
+            else:
+                # Need to loop back to the beginning of the tone
+                remaining = len(tones[1])-tone_positions[1]
+                outdata[:remaining] = (
+                    tones[1][tone_positions[1]:len(tones[1])]
+                )
+                outdata[remaining:] = (
+                    tones[1][:samples-remaining]
+                )
+                tone_positions[1] = samples-remaining
+
             
         # Store the recording
         rec_pcm[rec_position:rec_position+samples] = indata[:]
         rec_position += samples
 
+        
         # If we have more than the required number of samples
         # recorded, execute FFT analysis
-        fft_n = 256 # about 5ms at 48kHz
         if rec_position > fft_n:
             data = rec_pcm[rec_position-256:rec_position]
             data_transpose = data.transpose()
@@ -108,11 +140,16 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
                 y = db[freq_index]
                 dbs.append(y)
 
-            mean = numpy.mean(db)
-            decision = dbs[0] - 30 > mean
-            print(decision, numpy.mean(db), dbs)
-            #raise sd.CallbackAbort
+            sum_others = numpy.sum(db) - numpy.sum(dbs)
+            mean_others = sum_others / len(db)
+            decision = dbs[0] - 20 > mean_others
 
+            if decision:
+                tones_detected[0] += samples
+            else:
+                tones_detected[0] = 0
+
+            print(decision, tones_detected[0], mean_others, dbs)
             
             
             
