@@ -68,8 +68,12 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
     tones_detected = [0] * len(tones)
 
     # Initialise the number of samples for which the tone has been
-    # played
+    # played; None indicates the tone is not being played.
     tones_played = [None] * len(tones)
+
+    # Initialise the number of samples for which the tone has been
+    # continuously silent; we start in silence
+    tones_silence = [0] * len(tones)
 
     # Initialise commands for starting and stopping tones
     tones_play_cmd = [False] * len(tones)
@@ -77,17 +81,22 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
 
     # Play the background tone all the time
     tones_play_cmd[0] = True
+    tones_play_cmd[1] = True
     
     # Callback for when the recording buffer is ready.  The size of the
     # buffer depends on the latency requested.
     def callback(indata, outdata, samples, time, status):
         nonlocal rec_position, tone_positions, tones_detected, tones_played
-        nonlocal tones_play_cmd, tones_stop_cmd
+        nonlocal tones_play_cmd, tones_stop_cmd, tones_silence
 
+        #print("")
+        
         if status:
             print(status)
 
-
+        # Transitions
+        # ===========
+            
         # If the background tone has been detected, then we need to
         # start measuring latency
         if tones_detected[0] > 0.5*samples_per_second:
@@ -98,23 +107,101 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
                 tones_played[1] = 0
                 tones_play_cmd[1] = True
 
-            
-        # Play the tones
-        for index, tone_play_cmd in enumerate(tones_play_cmd):
-            if tone_play_cmd:
-                # We have been requested to play the tone
+
+        # Respond to detection of the tone if we've heard it
+        # continuously for sufficient time.
+        threshold_samples = 256 # approx 5ms
+        if (tones_detected[1] >= threshold_samples) and (tones_played[1] is not None):
+            if tones_played[1] is None:
+                print("False detection")
+            else:
+                samples_since_started = tones_played[1] - threshold_samples 
+                seconds_since_started = samples_since_started / samples_per_second
+                print("time_since_start:",
+                      round(seconds_since_started*1000, 1),
+                      "ms")
+
+                tones_play_cmd[1] = False
+
+                print("Requesting that tone #",1,"stop")
+                tones_stop_cmd[1] = True
+
+
+
+                
+        #print("Stop cmd:", tones_stop_cmd)
+        #print("silence:", tones_silence)
+
+        # Actions
+        # =======
+                
+        # Stop the tones
+        for index, tone_stop_cmd in enumerate(tones_stop_cmd):
+            if tone_stop_cmd:
+                print("Stopping tone #", index)
+                # We have been requested to stop the tone; we want to
+                # finish on a zero-crossing.  Rather than searching
+                # for a zero-crossing, we can just fade out the tone.
+                fade_multiplier = numpy.linspace(1, 0, samples)
+                if output_channels == 2:
+                    fade_multiplier = [[x,x] for x in fade_multiplier]
+                
                 if tone_positions[index]+samples <= len(tones[index]):
                     # Copy tone in one hit
                     outdata[:] = tones[index] \
+                        [tone_positions[index]:tone_positions[index]+samples] \
+                        * fade_multiplier
+                else:
+                    # Need to loop back to the beginning of the tone
+                    remaining = len(tones[index])-tone_positions[index]
+                    outdata[:remaining] = (
+                        tones[index][tone_positions[index]:len(tones[index])] \
+                        * fade_multiplier[:remaining]
+                    )
+                    outdata[remaining:] = (
+                        tones[index][:samples-remaining] \
+                        * fade_multiplier[-samples-remaining-1:]
+                    )
+
+                # Set tone position back to zero
+                tone_positions[index] = 0
+
+                # Set number of samples played back to None to
+                # indicate that it's not currently being played
+                tones_played[index] = None
+
+                # Set the number of samples of silence to zero
+                tones_silence[index] = 0
+
+                # Turn off the stop command
+                print("Clearing the stop command for index", index)
+                tones_stop_cmd[index] = False
+
+                
+        # Fill the outdata with zeros
+        if output_channels == 1:
+            outdata[:] = [0] * samples
+        else:
+            outdata[:] = [[0,0]] * samples
+        
+        # Play the tones
+        #print("Play commands:", tones_play_cmd)
+        for index, tone_play_cmd in enumerate(tones_play_cmd):
+            if tone_play_cmd:
+                print("Playing tone #", index)
+                # We have been requested to play the tone
+                if tone_positions[index]+samples <= len(tones[index]):
+                    # Copy tone in one hit
+                    outdata[:] += tones[index] \
                         [tone_positions[index]:tone_positions[index]+samples]
                     tone_positions[index] += samples
                 else:
                     # Need to loop back to the beginning of the tone
                     remaining = len(tones[index])-tone_positions[index]
-                    outdata[:remaining] = (
+                    outdata[:remaining] += (
                         tones[index][tone_positions[index]:len(tones[index])]
                     )
-                    outdata[remaining:] = (
+                    outdata[remaining:] += (
                         tones[index][:samples-remaining]
                     )
                     tone_positions[index] = samples-remaining
@@ -122,13 +209,29 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
                     tones_played[index] = samples
                 else:
                     tones_played[index] += samples
-        
+
+                # We're now playing this tone so set silence to None
+                tones_silence[index] = None
+
+                    
+        # Count silence
+        for index in range(len(tones)):
+            if (not tones_play_cmd[index]) and (not tones_stop_cmd[index]):
+                # Increment the number of samples of silence
+                if tones_silence[index] is None:
+                    tones_silence[index] = samples
+                else:
+                    tones_silence[index] += samples
+                    
             
         # Store the recording
         rec_pcm[rec_position:rec_position+samples] = indata[:]
         rec_position += samples
 
-        
+
+        # Analysis
+        # ========
+                
         # If we have more than the required number of samples
         # recorded, execute FFT analysis
         if rec_position > fft_n:
@@ -143,6 +246,10 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
                 n=fft_n
             )
             sp = numpy.abs(sp)
+            sp_max = sp.max()
+            if sp_max == 0:
+                # We don't have any signal; stop analysing
+                return 
             db = 20*numpy.log10(sp / sp.max())
 
             dbs = []
@@ -184,35 +291,13 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
             
             print(
                 samples,
-                decisions,
-                tones_played,
-                tones_detected,
+                "play:",tones_play_cmd,
+                "decision:",decisions,
+                "s.played:",tones_played,
+                "s.detected:",tones_detected,
                 round(mean_others,1),
                 numpy.around(dbs,1)
             )
-            
-            # Respond to detection of the tone if we've heard it
-            # continuously for sufficient time.
-            threshold_samples = 256 # approx 5ms
-            if tones_detected[1] >= threshold_samples:
-                if tones_played[1] is None:
-                    print("False detection")
-                else:
-                    samples_since_started = tones_played[1] - threshold_samples 
-                    seconds_since_started = samples_since_started / samples_per_second
-                    print("time_since_start:",
-                          round(seconds_since_started*1000, 1),
-                          "ms")
-
-                    tones_play_cmd[0] = False
-                    tones_stop_cmd[1] = True
-                    #tones_played[1] = 0
-                    #raise sd.CallbackStop
-            
-            
-            
-        # Detect the tone
-        
 
             
     # Play first tone
@@ -220,7 +305,7 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
     stream = sd.Stream(samplerate=48000,
                        channels=2,
                        dtype=numpy.float32,
-                       latency="low",
+                       latency=0.2,#"low",
                        callback=callback)
 
     print("Playing...")
