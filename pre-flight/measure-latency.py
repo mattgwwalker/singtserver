@@ -4,6 +4,7 @@ import time
 import sounddevice as sd
 import numpy
 from enum import Enum
+import time
 
 # Phase One
 # =========
@@ -80,107 +81,182 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
     min_on_seconds = 0.3 # seconds
     min_on_samples = min_on_seconds * samples_per_second
 
-    # Set the minimum on-time for a tone
-    min_off_seconds = 3 # seconds
+    # Set the minimum off-time for a tone
+    min_off_seconds = 0.3 # seconds
     min_off_samples = min_off_seconds * samples_per_second
 
+    # Specify the minimum duration for a tone to be continuously
+    # detected before we will process the detection.
+    threshold_detected_ms = 5 #ms
+    threshold_detected_samples = (
+        threshold_detected_ms * samples_per_second // 1000
+    )
+
+    
     # States for a tone
-    class State(Enum):
+    class ToneState(Enum):
         RESET = 0
         #STARTING = 1
-        PLAYING = 2
-        #STOPPING = 3
-        STOPPED = 4
-    tones_state = [State.RESET] * len(tones)
+        PLAYING = 2   # play for min on time
+        STOPPING = 3  # fade out tone
+        STOPPED = 4   # wait for min off time
+    tones_state = [ToneState.RESET] * len(tones)
 
     # Commands for a tone
-    class Command(Enum):
+    class ToneCommand(Enum):
         NONE = 0
         START = 1
         STOP = 2
-    tones_cmd = [Command.NONE] * len(tones)
+    tones_cmd = [ToneCommand.NONE] * len(tones)
 
     # Start the first tone
-    tones_cmd[0] = Command.START
+    tones_cmd[0] = ToneCommand.START
+
+    # Timers for each tone
+    tones_start_time = [None] * len(tones)
+    
+    # List for latency measurements
+    latencies = []
+
+    # States for the thread
+    class ThreadState(Enum):
+        RESET = 0
+        RUNNING = 1
+        ENDING = 2
+        ENDED = 3
+        ABORTING = 4
+        ABORTED = 5
+    thread_state = ThreadState.RESET
+    
+    # Commands for the thread
+    class ThreadCommand(Enum):
+        NONE = 0
+        END = 1
+        ABORT = 2
+    thread_cmd = ThreadCommand.NONE
     
     # Callback for when the recording buffer is ready.  The size of the
     # buffer depends on the latency requested.
     def callback(indata, outdata, samples, time, status):
         nonlocal rec_position, tone_positions, tones_detected, tones_played
-        nonlocal tones_silence
+        nonlocal tones_silence, latencies, thread_state, thread_cmd
 
         # FIXME: These aren't necessary when finished
         assert len(indata) == len(outdata)
         assert len(indata) == samples
         
         print("")
-        
         if status:
             print(status)
 
-        # Transitions
-        # ===========
+        # Thread Transitions
+        # ==================
+
+        if thread_state == ThreadState.RESET:
+            thread_state = ThreadState.RUNNING
+            
+        elif thread_state == ThreadState.RUNNING:
+            if thread_cmd == ThreadCommand.END:
+                thread_state = ThreadState.ENDING
+            elif thread_cmd == ThreadCommand.ABORT:
+                thread_state = ThreadState.ABORTING
+
+        elif thread_state == ThreadState.ENDING:
+            next_state = ThreadState.ENDED
+            for tone_state in tones_state:
+                if (tone_state != ToneState.STOPPED and
+                    tone_state != ToneState.RESET):
+                    next_state = ThreadState.ENDING
+            thread_state = next_state
+
+        elif thread_state == ThreadState.ENDED:
+            # We stay in this state
+            pass
+
+        elif thread_state == ThreadState.ABORTING:
+            next_state = ThreadState.ABORTED
+            for tone_state in tones_state:
+                if (tone_state != ToneState.STOPPED and
+                    tone_state != ToneState.RESET):
+                    next_state = ThreadState.ABORTING
+            thread_state = next_state
+
+        elif thread_state == ThreadState.ABORTED:
+            # We stay in this state
+            pass
+        
+
+        # Thread States
+        # =============
+        
+        if thread_state == ThreadState.RESET:
+            pass
+            
+        elif thread_state == ThreadState.RUNNING:
+            pass
+
+        elif thread_state == ThreadState.ENDING:
+            pass
+
+        elif thread_state == ThreadState.ENDED:
+            raise sd.CallbackStop
+
+        elif thread_state == ThreadState.ABORTING:
+            pass
+
+        elif thread_state == ThreadState.ABORTED:
+            raise sd.CallbackAbort
+        
+            
+        # Tone Transitions
+        # ================
 
         for index, tone_state in enumerate(tones_state):
             tone_cmd = tones_cmd[index]
-            if tone_state == State.RESET:
-                if tone_cmd == Command.NONE:
+
+            # RESET Transitions
+            if tone_state == ToneState.RESET:
+                if tone_cmd == ToneCommand.NONE:
                     pass
-                elif tone_cmd == Command.START:
-                    tones_state[index] = State.PLAYING
+                elif tone_cmd == ToneCommand.START:
+                    tones_state[index] = ToneState.PLAYING
+                    print("Starting timer for tone #",index)
+                    print("time.outputBufferDacTime:", time.outputBufferDacTime)
+                    tones_start_time[index] = time.outputBufferDacTime
                 else:
                     print("Invalid command (",tone_cmd,") for tone",index,"in state",tone_state)
-                    tones_cmd[index] = Command.NONE
-                    
-            elif tone_state == State.PLAYING:
-                if tone_cmd == Command.NONE:
+                tones_cmd[index] = ToneCommand.NONE
+
+            # PLAYING Transitions
+            elif tone_state == ToneState.PLAYING:
+                if tone_cmd == ToneCommand.NONE:
                     pass
-                elif tone_cmd == Command.STOP:
+                elif tone_cmd == ToneCommand.START:
+                    # Just ignore it; we're already playing
+                    pass
+                elif tone_cmd == ToneCommand.STOP:
                     if tones_played[index] >= min_on_samples:
-                        tones_state[index] = State.STOPPING
+                        tones_state[index] = ToneState.STOPPING
                     else:
                         print("Tone",index,"requested to stop, ",
                               "but it hasn't been on for long enough")
                 else:
                     print("Invalid command (",tone_cmd,") for tone",index,"in state",tone_state)
-                    tones_cmd[index] = Command.NONE
-                    
-            elif tone_state == State.STOPPED:
+
+                # Clear the just-processed command
+                tones_cmd[index] = ToneCommand.NONE
+
+            # STOPPING Transitions
+            elif tone_state == ToneState.STOPPING:
+                # From this state, move immediately to Stopped.
+                tones_state[index] = ToneState.STOPPED
+
+            # STOPPED Transitions
+            elif tone_state == ToneState.STOPPED:
+                # Ensure that the tone has been off for the minimum
+                # required time.
                 if tones_silence[index] >= min_off_samples:
-                    tones_state[index] = State.RESET
-
-
-        # FIXME: Temp remove the following code
-        if False:
-            # If the background tone has been detected, then we need to
-            # start measuring latency
-            if tones_detected[0] > 0.5*samples_per_second:
-                # If we've just started playing this tone, set tones
-                # played to zero
-                if tones_played[1] is None:
-                    print("Playing second tone")
-                    tones_played[1] = 0
-                    tones_play_cmd[1] = True
-
-
-            # Respond to detection of the tone if we've heard it
-            # continuously for sufficient time.
-            threshold_samples = 256 # approx 5ms
-            if (tones_detected[1] >= threshold_samples) and (tones_played[1] is not None):
-                if tones_played[1] is None:
-                    print("False detection")
-                else:
-                    samples_since_started = tones_played[1] - threshold_samples 
-                    seconds_since_started = samples_since_started / samples_per_second
-                    print("time_since_start:",
-                          round(seconds_since_started*1000, 1),
-                          "ms")
-
-
-                    print("Requesting that tone #",1,"stop")
-                    tones_stop_cmd[1] = True
-
-
+                    tones_state[index] = ToneState.RESET
 
                 
         #print("Stop cmd:", tones_stop_cmd)
@@ -198,9 +274,15 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
 
         for index, tone_state in enumerate(tones_state):
             print("Tone",index,"in state",tone_state)
-            if tone_state == State.RESET:
+
+            
+            # RESET State
+            if tone_state == ToneState.RESET:
                 pass
-            elif tone_state == State.PLAYING:
+
+            
+            # PLAYING State
+            elif tone_state == ToneState.PLAYING:
                 print("Playing tone #", index)
                 # We have been requested to play the tone
                 if tone_positions[index]+samples <= len(tones[index]):
@@ -223,11 +305,69 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
                 else:
                     tones_played[index] += samples
 
-                # We're now playing this tone so set silence to None
+                # Given we're playing this tone, set silence to None
                 tones_silence[index] = None
 
-                
-            elif tone_state == State.STOPPING:
+                # While we're playing, detect if we've heard the tone
+                if index==0:
+                    # We're playing the background tone
+                    if tones_detected[0] > threshold_detected_samples:
+                        # The background tone has been detected, so we
+                        # need to start measuring latency.  Start tone
+                        # #1.
+                        tones_cmd[1] = ToneCommand.START
+                    elif tones_played[0] > 48000:
+                        # Give up
+                        thread_cmd = ThreadCommand.ABORT
+                        
+
+                elif index==1:
+                    # We're playing tone #1
+                    if tones_detected[1] > threshold_detected_samples:
+                        # Tone #1 has been detected.  Store how long
+                        # it took, and then turn it off.
+                        if tones_start_time[1] is not None:
+                            end_time = (time.inputBufferAdcTime
+                                        + samples / samples_per_second
+                                        - tones_detected[1] / samples_per_second)
+                            print("end_time:",end_time)
+                            latency = end_time - tones_start_time[1]
+                            print("Latency of",latency*1000,"ms detected")
+                            latencies.append(latency)
+                            tones_start_time[1] = None
+                            tones_cmd[1] = ToneCommand.STOP
+                        
+                    
+            # if tones_detected[0] > 0.5*samples_per_second:
+            #     # If we've just started playing this tone, set tones
+            #     # played to zero
+            #     if tones_played[1] is None:
+            #         print("Playing second tone")
+            #         tones_played[1] = 0
+            #         tones_play_cmd[1] = True
+
+
+
+
+
+                # # Respond to detection of the tone if we've heard it
+                # # continuously for sufficient time.
+                # if (#index != 0 and
+                #         tones_detected[index] >= threshold_detected_samples):
+                #     samples_since_started = tones_played[index] - threshold_samples 
+                #     seconds_since_started = samples_since_started / samples_per_second
+                #     print("time_since_start:",
+                #           round(seconds_since_started*1000, 1),
+                #           "ms")
+
+                #     print("Requesting that tone #",index,"stop")
+                #     tones_cmd[index] = ToneCommand.STOP
+
+
+
+
+            # STOPPING State
+            elif tone_state == ToneState.STOPPING:
                 print("Stopping tone #", index)
                 # We have been requested to stop the tone; we want to
                 # finish on a zero-crossing.  Rather than searching
@@ -263,106 +403,84 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
                 # Set the number of samples of silence to zero
                 tones_silence[index] = 0
 
-                # Turn off the stop command
-                print("Clearing the stop command for index", index)
-                tones_stop_cmd[index] = False
 
-                # Turn off the play command
-                print("Clearing the play command for index", index)
-                tones_play_cmd[index] = False
+            # STOPPED State
+            elif tone_state == ToneState.STOPPED:
+                # Increment the number of samples of silence; it was
+                # reset to zero in the STOPPING state.
+                tones_silence[index] += samples
 
-                
-            elif tone_state == State.STOPPED:
-                pass
+                # TEST
+                tones_cmd[index] = ToneCommand.START
             
         
 
-        # FIXME: Temp inactive
-        if False:
-            # Count silence
-            for index in range(len(tones)):
-                if (not tones_play_cmd[index]) and (not tones_stop_cmd[index]):
-                    # Increment the number of samples of silence
-                    if tones_silence[index] is None:
-                        tones_silence[index] = samples
-                    else:
-                        tones_silence[index] += samples
+        # Store the recording
+        rec_pcm[rec_position:rec_position+samples] = indata[:]
+        rec_position += samples
 
 
-            # Store the recording
-            rec_pcm[rec_position:rec_position+samples] = indata[:]
-            rec_position += samples
+        # Analysis
+        # ========
 
+        # If we have more than the required number of samples
+        # recorded, execute FFT analysis
+        if rec_position > fft_n:
+            data = rec_pcm[rec_position-256:rec_position]
+            data_transpose = data.transpose()
+            left = data_transpose[0]
+            right = data_transpose[1]
+            mono = left+right
 
-            # Analysis
-            # ========
+            sp = numpy.fft.rfft(
+                mono,
+                n=fft_n
+            )
+            sp = numpy.abs(sp)
+            sp_max = sp.max()
+            if sp_max == 0:
+                # We don't have any signal; stop analysing
+                return 
+            db = 20*numpy.log10(sp / sp.max())
 
-            # If we have more than the required number of samples
-            # recorded, execute FFT analysis
-            if rec_position > fft_n:
-                data = rec_pcm[rec_position-256:rec_position]
-                data_transpose = data.transpose()
-                left = data_transpose[0]
-                right = data_transpose[1]
-                mono = left+right
+            dbs = []
+            for freq_index in freq_indices:
+                y = db[freq_index]
+                dbs.append(y)
 
-                sp = numpy.fft.rfft(
-                    mono,
-                    n=fft_n
-                )
-                sp = numpy.abs(sp)
-                sp_max = sp.max()
-                if sp_max == 0:
-                    # We don't have any signal; stop analysing
-                    return 
-                db = 20*numpy.log10(sp / sp.max())
+            sum_others = numpy.sum(db) - numpy.sum(dbs)
+            mean_others = sum_others / len(db)
 
-                dbs = []
-                for freq_index in freq_indices:
-                    y = db[freq_index]
-                    dbs.append(y)
+            # Clear decisions
+            decisions = [False] * len(freqs)
 
-                sum_others = numpy.sum(db) - numpy.sum(dbs)
-                mean_others = sum_others / len(db)
+            # FIXME: These probably shouldn't be hard-coded
+            threshold_noise_db = 20 # dB louder than noise
+            threshold_signal_db = 20 # db within other signals
 
-                # Clear decisions
-                decisions = [False] * len(freqs)
-
-                # Detect the first tone
-                threshold_noise_db = 20 # dB louder than noise
-                threshold_signal_db = 20 # db within other signals
-                decisions[0] = (
-                    (dbs[0] - threshold_noise_db > mean_others) and
-                    (dbs[0] + threshold_signal_db > dbs[1]) and
-                    (dbs[0] + threshold_signal_db > dbs[2])
+            for index, _ in enumerate(tones):
+                index_other1 = (index+1) % len(tones)
+                index_other2 = (index+2) % len(tones)
+                decisions[index] = (
+                    (dbs[index] - threshold_noise_db > mean_others) and
+                    (dbs[index] + threshold_signal_db > dbs[index_other1]) and
+                    (dbs[index] + threshold_signal_db > dbs[index_other2])
                 )
 
-                if decisions[0]:
-                    tones_detected[0] += samples
+                if decisions[index]:
+                    tones_detected[index] += samples
                 else:
-                    tones_detected[0] = 0
+                    tones_detected[index] = 0
 
-                # Detect the second tone
-                #decisions[1] = dbs[1] - 20 > mean_others
-                decisions[1] = (
-                    (dbs[1] - threshold_noise_db > mean_others) and
-                    (dbs[1] + threshold_signal_db > dbs[0]) and
-                    (dbs[1] + threshold_signal_db > dbs[2])
-                )
-                if decisions[1]:
-                    tones_detected[1] += samples
-                else:
-                    tones_detected[1] = 0
-
-                print(
-                    samples,
-                    "play:",tones_play_cmd,
-                    "decision:",decisions,
-                    "s.played:",tones_played,
-                    "s.detected:",tones_detected,
-                    round(mean_others,1),
-                    numpy.around(dbs,1)
-                )
+            #print(
+            #    samples,
+            #    "play:",tones_play_cmd,
+            #    "decision:",decisions,
+            #    "s.played:",tones_played,
+            #    "s.detected:",tones_detected,
+            #    round(mean_others,1),
+            #    numpy.around(dbs,1)
+            #)
 
             
     # Play first tone
@@ -370,7 +488,7 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
     stream = sd.Stream(samplerate=48000,
                        channels=2,
                        dtype=numpy.float32,
-                       latency=0.2,#"low",
+                       latency="low",
                        callback=callback)
 
     print("Playing...")
