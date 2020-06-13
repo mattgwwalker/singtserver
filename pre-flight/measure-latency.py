@@ -110,8 +110,8 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
     tones_cmd = [ToneCommand.NONE] * len(tones)
 
     # Start the first tone
-    #tones_cmd[0] = ToneCommand.START
-    tones_cmd[1] = ToneCommand.START
+    tones_cmd[0] = ToneCommand.START
+    #tones_cmd[1] = ToneCommand.START
 
     # Timers for each tone
     tones_start_time = [None] * len(tones)
@@ -378,21 +378,25 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
                     fade_multiplier = [[x,x] for x in fade_multiplier]
                 
                 if tones_position[index]+samples <= len(tones[index]):
-                    # Copy tone in one hit
-                    outdata[:] = tones[index] \
-                        [tones_position[index]:tones_position[index]+samples] \
+                    # Apply multiplier
+                    faded_pcm = tones[index] \
+			[tones_position[index]:tones_position[index]+samples] \
                         * fade_multiplier
+                    # Copy tone in one hit
+                    outdata[:] += faded_pcm
                 else:
                     # Need to loop back to the beginning of the tone
                     remaining = len(tones[index])-tones_position[index]
-                    outdata[:remaining] = (
+                    faded_pcm = fade_multiplier
+                    faded_pcm[:remaining] = (
                         tones[index][tones_position[index]:len(tones[index])] \
                         * fade_multiplier[:remaining]
                     )
-                    outdata[remaining:] = (
+                    faded_pcm[remaining:] = (
                         tones[index][:samples-remaining] \
                         * fade_multiplier[-samples-remaining-1:]
                     )
+                    outdata[:] = faded_pcm[:]
 
                 # Set tone position back to zero
                 tones_position[index] = 0
