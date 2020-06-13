@@ -59,6 +59,9 @@ class FFTAnalyser:
 
 class Tone:
     def __init__(self, freq, duration=1.0, samples_per_second=48000, channels=2):
+        # FIXME: The duration should be extended so that the PCM
+        # finishes on a zero-crossing.
+        
         t = numpy.linspace(
             0,
             duration,
@@ -137,7 +140,8 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
         MEASURE_TONE0 = 3
         DETECT_TONE1 = 4
         MEASURE_TONE0_TONE1 = 5
-        ABORTED = 6
+        COMPLETED = 6
+        ABORTED = 7
     process_state = ProcessState.RESET
 
     fft_analyser = FFTAnalyser(samples_per_second)
@@ -173,16 +177,32 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
     tone0_threshold_duration = 0.5 # seconds of tone0 and not tone1
     tone0_mean = None
     tone0_sd = None
+
+    # Variables for detection of tone1
+    detect_tone1_threshold_num_sd = 6 # number of std. deviations away from not-tone1
+    detect_tone1_threshold_duration = 0.5 # seconds of not-not-tone1
+    detect_tone1_start_time = None
+    detect_tone1_detected = False
+
+    # Variables for measurement of tone0 and tone1
+    tone0_tone1_levels = []
+    tone0_tone1_start_time = None
+    tone0_tone1_threshold_duration = 0.5 # seconds of tone0 and tone1
+    tone0_tone1_mean = None
+    tone0_tone1_sd = None
     
     # Callback for when the recording buffer is ready.  The size of the
     # buffer depends on the latency requested.
     def callback(indata, outdata, samples, time, status):
+        # FIXME: This is rediculous!
         nonlocal rec_pcm, rec_position
         nonlocal process_state
         nonlocal silence_seconds, silence_levels, silence_start_time, silence_mean, silence_sd
         nonlocal non_silence_threshold_num_sd, non_silence_threshold_duration, non_silence_start_time
         nonlocal non_silence_detected, non_silence_abort_start_time, non_silence_threshold_abort_duration
         nonlocal tone0_levels, tone0_start_time, tone0_threshold_duration, tone0_mean, tone0_sd
+        nonlocal detect_tone1_threshold_num_sd, detect_tone1_threshold_duration, detect_tone1_start_time, detect_tone1_detected
+        nonlocal tone0_tone1_levels, tone0_tone1_start_time, tone0_tone1_threshold_duration, tone0_tone1_mean, tone0_tone1_sd
         
         # Store Recording
         # ===============
@@ -240,8 +260,21 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
                 
 
         elif process_state == ProcessState.MEASURE_TONE0:
-            pass
-        
+            if tone0_mean is not None and \
+               tone0_sd is not None:
+                process_state = ProcessState.DETECT_TONE1
+                
+        elif process_state == ProcessState.DETECT_TONE1:
+            if detect_tone1_detected:
+                process_state = ProcessState.MEASURE_TONE0_TONE1
+
+        elif process_state == ProcessState.MEASURE_TONE0_TONE1:
+            if tone0_tone1_mean is not None and \
+               tone0_tone1_sd is not None:
+                process_state = ProcessState.COMPLETED
+
+        elif process_state == ProcessState.COMPLETED:
+            pass    
         
 
         # States
@@ -305,11 +338,71 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
                 print("tone0_mean:",tone0_mean)
                 print("tone0_sd:", tone0_sd)
 
-                raise sd.CallbackAbort
-                
                         
+        elif process_state == ProcessState.DETECT_TONE1:
+            # Temporary output buffer
+            output_buffer = numpy.zeros(outdata.shape)
+            # Play tone #0
+            tones[0].play(samples, output_buffer)
+            # Play tone #1
+            tones[1].play(samples, outdata)
+            # Combine the two tones
+            outdata += output_buffer
+            # Average the two tones to ensure we don't peak
+            outdata /= 2 
+            
 
+            # Calculate the number of standard deviations from not-tone1
+            num_sd = (tones_level[1] - tone0_mean[1]) / tone0_sd[1]
 
+            if num_sd > detect_tone1_threshold_num_sd:
+                if detect_tone1_start_time is None:
+                    detect_tone1_start_time = time.currentTime
+                else:
+                    duration = time.currentTime - detect_tone1_start_time
+                    if duration > detect_tone1_threshold_duration:
+                        print("Tone #1 detected")
+                        detect_tone1_detected = True
+            else:
+                # Reset timer
+                non_silence_start_time = None
+            
+
+        elif process_state == ProcessState.MEASURE_TONE0_TONE1:
+            # FIXME: The following code should be a function of some sort.
+            
+            # Temporary output buffer
+            output_buffer = numpy.zeros(outdata.shape)
+            # Play tone #0
+            tones[0].play(samples, output_buffer)
+            # Play tone #1
+            tones[1].play(samples, outdata)
+            # Combine the two tones
+            outdata += output_buffer
+            # Average the two tones to ensure we don't peak
+            outdata /= 2 
+
+            # Start the timer if not started
+            if tone0_tone1_start_time is None:
+                tone0_tone1_start_time = time.currentTime
+
+            # TODO: Should we check that we've got not-not-tone1?
+                
+            # Save the levels because we assume we're hearing tone #1
+            tone0_tone1_levels.append(tones_level)
+
+            duration = time.currentTime - tone0_tone1_start_time
+            if duration > tone0_tone1_threshold_duration:
+                # We've now collected enough samples
+                tone0_tone1_mean = numpy.mean(tone0_tone1_levels, axis=0)
+                tone0_tone1_sd = numpy.std(tone0_tone1_levels, axis=0)
+                print("tone0_tone1_mean:",tone0_tone1_mean)
+                print("tone0_tone1_sd:", tone0_tone1_sd)
+
+                
+        elif process_state == ProcessState.COMPLETED:
+            print("Finished measuring levels")
+            raise sd.CallbackStop
 
 
 
