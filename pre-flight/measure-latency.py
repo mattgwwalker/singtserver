@@ -78,11 +78,11 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
     tones_silence = [0] * len(tones)
 
     # Set the minimum on-time for a tone
-    min_on_seconds = 0.3 # seconds
+    min_on_seconds = 0.2 # seconds
     min_on_samples = min_on_seconds * samples_per_second
 
     # Set the minimum off-time for a tone
-    min_off_seconds = 0.3 # seconds
+    min_off_seconds = 0.2 # seconds
     min_off_samples = min_off_seconds * samples_per_second
 
     # Specify the minimum duration for a tone to be continuously
@@ -146,7 +146,7 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
         assert len(indata) == len(outdata)
         assert len(indata) == samples
         
-        print("")
+        #print("")
         if status:
             print(status)
 
@@ -221,8 +221,8 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
                     pass
                 elif tone_cmd == ToneCommand.START:
                     tones_state[index] = ToneState.PLAYING
-                    print("Starting timer for tone #",index)
-                    print("time.outputBufferDacTime:", time.outputBufferDacTime)
+                    #print("Starting timer for tone #",index)
+                    #print("time.outputBufferDacTime:", time.outputBufferDacTime)
                     tones_start_time[index] = time.outputBufferDacTime
                 else:
                     print("Invalid command (",tone_cmd,") for tone",index,"in state",tone_state)
@@ -236,8 +236,9 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
                     if tones_played[index] >= min_on_samples:
                         tones_state[index] = ToneState.STOPPING
                     else:
-                        print("Tone",index,"requested to stop, ",
-                              "but it hasn't been on for long enough")
+                        pass
+                        #print("Tone",index,"requested to stop, ",
+                        #      "but it hasn't been on for long enough")
                 else:
                     print("Invalid command (",tone_cmd,") for tone",index,"in state",tone_state)
                     # Clear the just-processed command
@@ -270,7 +271,7 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
 
 
         for index, tone_state in enumerate(tones_state):
-            print("Tone",index,"in state",tone_state)
+            #print("Tone",index,"in state",tone_state)
 
             
             # RESET State
@@ -280,7 +281,7 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
             
             # PLAYING State
             elif tone_state == ToneState.PLAYING:
-                print("Playing tone #", index)
+                #print("Playing tone #", index)
                 # We have been requested to play the tone
                 if tones_position[index]+samples <= len(tones[index]):
                     # Copy tone in one hit
@@ -331,7 +332,7 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
                             end_time = (time.inputBufferAdcTime
                                         + samples / samples_per_second
                                         - tones_detected[1] / samples_per_second)
-                            print("end_time:",end_time)
+                            #print("end_time:",end_time)
                             latency = end_time - tones_start_time[1]
                             print("Latency of",latency*1000,"ms detected")
                             latencies.append(latency)
@@ -369,7 +370,7 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
 
             # STOPPING State
             elif tone_state == ToneState.STOPPING:
-                print("Stopping tone #", index)
+                #print("Stopping tone #", index)
                 # We have been requested to stop the tone; we want to
                 # finish on a zero-crossing.  Rather than searching
                 # for a zero-crossing, we can just fade out the tone.
@@ -495,7 +496,6 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
         if rec_position > samples_per_second:
             seconds_to_clear = 0.5 # seconds
             samples_to_clear = int(seconds_to_clear * samples_per_second)
-            print(rec_pcm.shape)
             rec_pcm = numpy.roll(rec_pcm, -samples_to_clear, axis=0)
             rec_position -= samples_to_clear
 
