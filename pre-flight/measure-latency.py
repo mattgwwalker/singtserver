@@ -6,6 +6,285 @@ import numpy
 from enum import Enum
 import time
 
+
+# Fast Fourier Transform for recorded samples, specifically focused on
+# certain frequencies.
+class FFTAnalyser:
+    def __init__(self, samples_per_second):
+        # Number of samples for FFT analysis.  Approximately 5ms at
+        # 48kHz.
+        self._n = 256 
+
+        fft_freqs = numpy.fft.rfftfreq(self._n) * samples_per_second
+        self._freq_indices = [2, 5]
+        self._freqs = [fft_freqs[i] for i in self._freq_indices]
+
+        print("FFT analysis configured for frequencies (Hz):", self._freqs)
+
+    
+    @property
+    def n_freqs(self):
+        """Gives the number of frequencies returned by the run() method."""
+        return len(self._freq_indices)
+
+
+    @property
+    def freqs(self):
+        """Gives the frequencies focussed on by this analyser."""
+        return self._freqs
+        
+    def run(self, rec_pcm, rec_position):
+        # If we have more than the required number of samples
+        # recorded, execute FFT analysis
+        if rec_position > self._n:
+            left = rec_pcm[rec_position-self._n:rec_position, 0]
+            right = rec_pcm[rec_position-self._n:rec_position, 1]
+            #data_transpose = data.transpose()
+            #left = data_transpose[0]
+            #right = data_transpose[1]
+            mono = (left+right) / 2
+
+            y = numpy.fft.rfft(
+                # Use of Hann window to reduce spectral leakage (see
+                # https://stackoverflow.com/questions/8573702/units-of-frequency-when-using-fft-in-numpy)
+                # I'm not sure this is really necessary.
+                mono * numpy.hanning(len(mono)), 
+                n=self._n
+            )
+            y = numpy.abs(y)
+
+            return y[self._freq_indices]
+    
+
+
+class Tone:
+    def __init__(self, freq, duration=1.0, samples_per_second=48000, channels=2):
+        t = numpy.linspace(
+            0,
+            duration,
+            int(duration * samples_per_second),
+            False
+        )
+
+        pcm = numpy.sin(freq * t * 2 * numpy.pi)
+
+        if channels == 2:
+            two_channels = [[x,x] for x in pcm]
+            self._pcm = numpy.array(two_channels, dtype=numpy.float32)
+        else:
+            self._pcm = pcm
+
+        self._pos = 0
+
+        
+        
+    def play(self, samples, outdata):
+        # Ensure the number of channels is the same
+        assert outdata.shape[1] == self._pcm.shape[1]
+        
+        if self._pos+samples <= len(self._pcm):
+            # Copy tone in one hit
+            outdata[:] = self._pcm \
+                [self._pos:self._pos+samples]
+            self._pos += samples
+        else:
+            # Need to loop back to the beginning of the tone
+            remaining = len(self._pcm)-self._pos
+            outdata[:remaining] = (
+                self._pcm[self._pos:len(self._pcm)]
+            )
+            outdata[remaining:] = (
+                self._pcm[:samples-remaining]
+            )
+            self._pos = samples-remaining
+
+
+
+
+
+        
+# Measure Levels
+# ==============
+
+# Measure levels of silence at tone #0's frequency.  Then play tone #0
+# and ask user to increase the system volume until non-silence is
+# detected.  From here, ask the user not to change the system volume.
+#
+# Then, measure levels of tone #0 and not-tone #1. Play tone #0 and
+# tone #1 and wait until we detect not-not-tone#1.  Finally, measure
+# levels of tone #0 and tone #1.
+
+def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,2)):
+    """Channels are specified as a tuple of (input channels, output channels)."""
+    input_channels, output_channels = channels
+
+    # Allocate space for recording
+    max_recording_duration = 2 #seconds
+    max_recording_samples = max_recording_duration * samples_per_second
+    rec_pcm = numpy.zeros((
+        max_recording_samples,
+        input_channels
+    ))
+
+    # Initialise recording position
+    rec_position = 0
+
+    # Class to describe the current state of the process
+    class ProcessState(Enum):
+        RESET = 0
+        MEASURE_SILENCE = 1
+        DETECT_TONE0 = 2
+        MEASURE_TONE0 = 3
+        DETECT_TONE1 = 4
+        MEASURE_TONE0_TONE1 = 5
+    process_state = ProcessState.RESET
+
+    fft_analyser = FFTAnalyser(samples_per_second)
+
+    # Variables for the measurement of levels of silence
+    silence_seconds = 0.5 # seconds
+    silence_levels = []
+    silence_start_time = None
+    silence_mean = None
+    silence_sd = None
+
+    # Variables for tones
+    tone_duration = 1 # second
+    tones = [Tone(freq,
+                  tone_duration,
+                  samples_per_second,
+                  output_channels)
+             for freq in fft_analyser.freqs]
+
+    # Variables for non-silence
+    non_silence_threshold_num_sd = 6 # number of std. deviations away from silence
+    non_silence_threshold_seconds = 0.5 # seconds of non-silence
+    non_silence_start_time = None
+    non_silence_detected = False
+    
+    # Callback for when the recording buffer is ready.  The size of the
+    # buffer depends on the latency requested.
+    def callback(indata, outdata, samples, time, status):
+        nonlocal rec_pcm, rec_position
+        nonlocal process_state
+        nonlocal silence_seconds, silence_levels, silence_start_time, silence_mean, silence_sd
+        nonlocal non_silence_threshold_num_sd, non_silence_threshold_seconds, non_silence_start_time
+        nonlocal non_silence_detected
+        
+        # Store Recording
+        # ===============
+        
+        rec_pcm[rec_position:rec_position+samples] = indata[:]
+        rec_position += samples
+
+        
+        # Analysis
+        # ========
+
+        tones_level = fft_analyser.run(rec_pcm, rec_position)
+        #print(tones_level)
+        
+
+        # Clear the first half second of the recording buffer if we've
+        # recorded more than one second
+        if rec_position > samples_per_second:
+            seconds_to_clear = 0.5 # seconds
+            samples_to_clear = int(seconds_to_clear * samples_per_second)
+            rec_pcm = numpy.roll(rec_pcm, -samples_to_clear, axis=0)
+            rec_position -= samples_to_clear
+
+        
+        # Transitions
+        # ===========
+
+        if process_state == ProcessState.RESET:
+            process_state = ProcessState.MEASURE_SILENCE
+            silence_start_time = time.inputBufferAdcTime
+            
+            
+        elif process_state == ProcessState.MEASURE_SILENCE:
+            if silence_mean is not None and \
+               silence_sd is not None:
+                process_state = ProcessState.DETECT_TONE0
+                print("About to play tone; please increase system volume until the tone is detected.")
+
+        elif process_state == ProcessState.DETECT_TONE0:
+            if non_silence_detected:
+                process_state = ProcessState.MEASURE_TONE0
+
+        elif process_state == ProcessState.MEASURE_TONE0:
+            pass
+        
+        
+
+        # States
+        # ======
+
+        if process_state == ProcessState.RESET:
+            pass
+            
+        elif process_state == ProcessState.MEASURE_SILENCE:
+            duration = time.currentTime - silence_start_time
+            if duration <= silence_seconds:
+                if tones_level is not None:
+                    silence_levels.append(tones_level)
+            else:
+                # We've now collected enough samples
+                #print("silence_levels:",silence_levels)
+                silence_mean = numpy.mean(silence_levels, axis=0)
+                silence_sd = numpy.std(silence_levels, axis=0)
+                print("silence_mean:",silence_mean)
+                print("silence_sd:", silence_sd)
+
+                
+        elif process_state == ProcessState.DETECT_TONE0:
+            # Play tone #0
+            tones[0].play(samples, outdata)
+
+            # Calculate the number of standard deviations from silence
+            num_sd = (tones_level[0] - silence_mean[0]) / silence_sd[0]
+
+            if num_sd > non_silence_threshold_num_sd:
+                if non_silence_start_time is None:
+                    non_silence_start_time = time.currentTime
+                else:
+                    duration = time.currentTime - non_silence_start_time
+                    if duration > non_silence_threshold_seconds:
+                        print("Non-silence detected")
+                        non_silence_detected = True
+            else:
+                # Reset timer
+                non_silence_start_time = None
+
+                
+        elif process_state == ProcessState.MEASURE_TONE0:
+            print("TODO: Measuring tone 0")
+            outdata[:] = [[0,0]] * samples
+
+                        
+
+
+
+
+
+        
+    # Open a read-write stream
+    stream = sd.Stream(samplerate=48000,
+                       channels=2,
+                       dtype=numpy.float32,
+                       latency="high",#"low",  # FIXME: desired_latency
+                       callback=callback)
+
+    print("Measuring levels...")
+    with stream:
+        input()  # Wait until measurement is finished
+
+    # Done!
+    print("Finished measuring levels.")
+
+
+
+
 # Phase One
 # =========
 # Measure latency approximately via tones.
@@ -110,7 +389,7 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
     tones_cmd = [ToneCommand.NONE] * len(tones)
 
     # Start the first tone
-    tones_cmd[0] = ToneCommand.START
+    #tones_cmd[0] = ToneCommand.START
     #tones_cmd[1] = ToneCommand.START
 
     # Timers for each tone
@@ -135,6 +414,10 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
         END = 1
         ABORT = 2
     thread_cmd = ThreadCommand.NONE
+
+    # List of noise levels recorded when playing nothing
+    tones_noise_levels = [[]] * len(tones)
+    
     
     # Callback for when the recording buffer is ready.  The size of the
     # buffer depends on the latency requested.
@@ -150,6 +433,125 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
         if status:
             print(status)
 
+
+
+
+
+        # Analysis
+        # ========
+
+        # Store the recording
+        rec_pcm[rec_position:rec_position+samples] = indata[:]
+        rec_position += samples
+
+        # If we have more than the required number of samples
+        # recorded, execute FFT analysis
+        if rec_position > fft_n:
+            data = rec_pcm[rec_position-256:rec_position]
+            data_transpose = data.transpose()
+            left = data_transpose[0]
+            right = data_transpose[1]
+            mono = left+right / 2
+
+            y = numpy.fft.rfft(
+                # Use of Hann window to reduce spectral leakage (see
+                # https://stackoverflow.com/questions/8573702/units-of-frequency-when-using-fft-in-numpy)
+                # I'm not sure this is really necessary.
+                mono * numpy.hanning(len(mono)), 
+                n=fft_n
+            )
+            y = numpy.abs(y)
+
+
+
+            # TEST
+            # Let's try measuring the levels of silence
+            for index, freq_index in enumerate(freq_indices):
+                level = y[freq_index]
+                print("level:", level)
+                tones_noise_levels[index].append(level)
+
+            return
+
+
+
+
+
+
+
+
+
+
+            # sp_max = sp.max()
+            # if sp_max == 0:
+            #     # We don't have any signal; stop analysing
+            #     return 
+            # db = 20*numpy.log10(sp / sp.max())
+
+            # TEST
+            # if sp.max() > 1.0:
+            #     print("sp.max():", sp.max())
+            #     assert False
+            # db = 20*numpy.log10(sp) # assumes the max volume is 1.0  
+
+            dbs = []
+            for freq_index in freq_indices:
+                y = db[freq_index]
+                dbs.append(y)
+
+            sum_others = numpy.sum(db) - numpy.sum(dbs)
+            mean_others = sum_others / len(db)
+
+            # Clear decisions
+            decisions = [False] * len(freqs)
+
+            # FIXME: These probably shouldn't be hard-coded
+            threshold_noise_db = 20 # dB louder than noise
+            threshold_signal_db = 20 # db within other signals
+
+            for index, _ in enumerate(tones):
+                index_other1 = (index+1) % len(tones)
+                index_other2 = (index+2) % len(tones)
+                decisions[index] = (
+                    (dbs[index] - threshold_noise_db > mean_others) and
+                    (dbs[index] + threshold_signal_db > dbs[index_other1]) and
+                    (dbs[index] + threshold_signal_db > dbs[index_other2])
+                )
+
+                if decisions[index]:
+                    tones_detected[index] += samples
+                else:
+                    tones_detected[index] = 0
+
+            print(
+            #    samples,
+            #    "play:",tones_play_cmd,
+            #    "decision:",decisions,
+            #    "s.played:",tones_played,
+            #    "s.detected:",tones_detected,
+            #    round(mean_others,1),
+                numpy.around(dbs,2)
+            )
+
+        # Clear the first half second of the recording buffer if we've
+        # recorded more than one second
+        if rec_position > samples_per_second:
+            seconds_to_clear = 0.5 # seconds
+            samples_to_clear = int(seconds_to_clear * samples_per_second)
+            rec_pcm = numpy.roll(rec_pcm, -samples_to_clear, axis=0)
+            rec_position -= samples_to_clear
+
+
+
+
+
+
+
+
+
+
+
+            
         # Thread Transitions
         # ==================
 
@@ -221,7 +623,7 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
                     pass
                 elif tone_cmd == ToneCommand.START:
                     tones_state[index] = ToneState.PLAYING
-                    #print("Starting timer for tone #",index)
+                    #print("\nStarting timer for tone #",index)
                     #print("time.outputBufferDacTime:", time.outputBufferDacTime)
                     tones_start_time[index] = time.outputBufferDacTime
                 else:
@@ -329,15 +731,23 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
                         # Tone #1 has been detected.  Store how long
                         # it took, and then turn it off.
                         if tones_start_time[1] is not None:
+                            # print("time.inputBufferAdcTime:",time.inputBufferAdcTime)
+                            # print("samples:", samples)
+                            # print("tones_detected[1]:", tones_detected[1])
+                            # print("samples_per_second:", samples_per_second)
                             end_time = (time.inputBufferAdcTime
                                         + samples / samples_per_second
                                         - tones_detected[1] / samples_per_second)
-                            #print("end_time:",end_time)
+                            # print("end_time:",end_time)
                             latency = end_time - tones_start_time[1]
                             print("Latency of",latency*1000,"ms detected")
-                            latencies.append(latency)
-                            tones_start_time[1] = None
-                            tones_cmd[1] = ToneCommand.STOP
+                            if latency < 0:
+                                #print("Negative latency; discarding")
+                                pass
+                            else:
+                                latencies.append(latency)
+                                tones_start_time[1] = None
+                                tones_cmd[1] = ToneCommand.STOP
                         
                     
             # if tones_detected[0] > 0.5*samples_per_second:
@@ -424,80 +834,6 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
             
         
 
-        # Store the recording
-        rec_pcm[rec_position:rec_position+samples] = indata[:]
-        rec_position += samples
-
-
-        # Analysis
-        # ========
-
-        # If we have more than the required number of samples
-        # recorded, execute FFT analysis
-        if rec_position > fft_n:
-            data = rec_pcm[rec_position-256:rec_position]
-            data_transpose = data.transpose()
-            left = data_transpose[0]
-            right = data_transpose[1]
-            mono = left+right
-
-            sp = numpy.fft.rfft(
-                mono,
-                n=fft_n
-            )
-            sp = numpy.abs(sp)
-            sp_max = sp.max()
-            if sp_max == 0:
-                # We don't have any signal; stop analysing
-                return 
-            db = 20*numpy.log10(sp / sp.max())
-
-            dbs = []
-            for freq_index in freq_indices:
-                y = db[freq_index]
-                dbs.append(y)
-
-            sum_others = numpy.sum(db) - numpy.sum(dbs)
-            mean_others = sum_others / len(db)
-
-            # Clear decisions
-            decisions = [False] * len(freqs)
-
-            # FIXME: These probably shouldn't be hard-coded
-            threshold_noise_db = 20 # dB louder than noise
-            threshold_signal_db = 20 # db within other signals
-
-            for index, _ in enumerate(tones):
-                index_other1 = (index+1) % len(tones)
-                index_other2 = (index+2) % len(tones)
-                decisions[index] = (
-                    (dbs[index] - threshold_noise_db > mean_others) and
-                    (dbs[index] + threshold_signal_db > dbs[index_other1]) and
-                    (dbs[index] + threshold_signal_db > dbs[index_other2])
-                )
-
-                if decisions[index]:
-                    tones_detected[index] += samples
-                else:
-                    tones_detected[index] = 0
-
-            #print(
-            #    samples,
-            #    "play:",tones_play_cmd,
-            #    "decision:",decisions,
-            #    "s.played:",tones_played,
-            #    "s.detected:",tones_detected,
-            #    round(mean_others,1),
-            #    numpy.around(dbs,1)
-            #)
-
-        # Clear the first half second of the recording buffer if we've
-        # recorded more than one second
-        if rec_position > samples_per_second:
-            seconds_to_clear = 0.5 # seconds
-            samples_to_clear = int(seconds_to_clear * samples_per_second)
-            rec_pcm = numpy.roll(rec_pcm, -samples_to_clear, axis=0)
-            rec_position -= samples_to_clear
 
             
     # Play first tone
@@ -553,9 +889,10 @@ def measure_latency():
     print("")
 
     input() # wait for enter key
-    
-    approximate_latency = phase_one()
-    accurate_latency = phase_two(approximate_latency)
+
+    measure_levels()
+    #approximate_latency = phase_one()
+    #accurate_latency = phase_two(approximate_latency)
     
     
 
