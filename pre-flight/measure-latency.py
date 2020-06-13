@@ -5,6 +5,7 @@ import sounddevice as sd
 import numpy
 from enum import Enum
 import time
+import threading
 
 
 # Fast Fourier Transform for recorded samples, specifically focused on
@@ -136,6 +137,9 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
     # Create a class to hold the shared variables
     class SharedVariables:
         def __init__(self, samples_per_second):
+            # Threading event on which the stream can wait
+            self.event = threading.Event()
+            
             self.samples_per_second = samples_per_second
         
             # Allocate space for recording
@@ -205,7 +209,6 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
     # Callback for when the recording buffer is ready.  The size of the
     # buffer depends on the latency requested.
     def callback(indata, outdata, samples, time, status):
-        # FIXME: This is rediculous!
         nonlocal v
         
         # Store Recording
@@ -409,22 +412,29 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             print("Finished measuring levels")
             raise sd.CallbackStop
 
-
-
         
     # Open a read-write stream
     stream = sd.Stream(samplerate=48000,
                        channels=2,
                        dtype=numpy.float32,
                        latency="high",#"low",  # FIXME: desired_latency
-                       callback=callback)
+                       callback=callback,
+                       finished_callback=v.event.set)
+
 
     print("Measuring levels...")
     with stream:
-        input()  # Wait until measurement is finished
+        v.event.wait()  # Wait until measurement is finished
 
     # Done!
     print("Finished measuring levels.")
+
+    return {
+        "tone0_mean": v.tone0_mean,
+        "tone0_sd": v.tone0_sd,
+        "tone0_tone1_mean": v.tone0_tone1_mean,
+        "tone0_tone1_sd": v.tone0_tone1_sd
+    }
 
 
 
@@ -1034,7 +1044,8 @@ def measure_latency():
 
     input() # wait for enter key
 
-    measure_levels()
+    levels = measure_levels()
+    print(levels)
     #approximate_latency = phase_one()
     #accurate_latency = phase_two(approximate_latency)
     
