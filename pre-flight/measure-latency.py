@@ -51,11 +51,11 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
         
         
     # Initialise the current position for each tone
-    tone_positions = [0] * len(tones)
+    tones_position = [0] * len(tones)
 
 
     # Allocate space for recording
-    max_recording_duration = 10 #seconds
+    max_recording_duration = 2 #seconds
     max_recording_samples = max_recording_duration * samples_per_second
     rec_pcm = numpy.zeros((
         max_recording_samples,
@@ -110,7 +110,8 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
     tones_cmd = [ToneCommand.NONE] * len(tones)
 
     # Start the first tone
-    tones_cmd[0] = ToneCommand.START
+    #tones_cmd[0] = ToneCommand.START
+    tones_cmd[1] = ToneCommand.START
 
     # Timers for each tone
     tones_start_time = [None] * len(tones)
@@ -138,7 +139,7 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
     # Callback for when the recording buffer is ready.  The size of the
     # buffer depends on the latency requested.
     def callback(indata, outdata, samples, time, status):
-        nonlocal rec_position, tone_positions, tones_detected, tones_played
+        nonlocal rec_pcm, rec_position, tones_position, tones_detected, tones_played
         nonlocal tones_silence, latencies, thread_state, thread_cmd
 
         # FIXME: These aren't necessary when finished
@@ -231,9 +232,6 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
             elif tone_state == ToneState.PLAYING:
                 if tone_cmd == ToneCommand.NONE:
                     pass
-                elif tone_cmd == ToneCommand.START:
-                    # Just ignore it; we're already playing
-                    pass
                 elif tone_cmd == ToneCommand.STOP:
                     if tones_played[index] >= min_on_samples:
                         tones_state[index] = ToneState.STOPPING
@@ -242,9 +240,8 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
                               "but it hasn't been on for long enough")
                 else:
                     print("Invalid command (",tone_cmd,") for tone",index,"in state",tone_state)
-
-                # Clear the just-processed command
-                tones_cmd[index] = ToneCommand.NONE
+                    # Clear the just-processed command
+                    tones_cmd[index] = ToneCommand.NONE
 
             # STOPPING Transitions
             elif tone_state == ToneState.STOPPING:
@@ -285,21 +282,21 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
             elif tone_state == ToneState.PLAYING:
                 print("Playing tone #", index)
                 # We have been requested to play the tone
-                if tone_positions[index]+samples <= len(tones[index]):
+                if tones_position[index]+samples <= len(tones[index]):
                     # Copy tone in one hit
                     outdata[:] += tones[index] \
-                        [tone_positions[index]:tone_positions[index]+samples]
-                    tone_positions[index] += samples
+                        [tones_position[index]:tones_position[index]+samples]
+                    tones_position[index] += samples
                 else:
                     # Need to loop back to the beginning of the tone
-                    remaining = len(tones[index])-tone_positions[index]
+                    remaining = len(tones[index])-tones_position[index]
                     outdata[:remaining] += (
-                        tones[index][tone_positions[index]:len(tones[index])]
+                        tones[index][tones_position[index]:len(tones[index])]
                     )
                     outdata[remaining:] += (
                         tones[index][:samples-remaining]
                     )
-                    tone_positions[index] = samples-remaining
+                    tones_position[index] = samples-remaining
                 if tones_played[index] is None:
                     tones_played[index] = samples
                 else:
@@ -315,9 +312,13 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
                         # The background tone has been detected, so we
                         # need to start measuring latency.  Start tone
                         # #1.
-                        tones_cmd[1] = ToneCommand.START
+                        if tones_state[1] is ToneState.RESET:
+                            # We aren't currently playing, so start
+                            # playing now.
+                            tones_cmd[1] = ToneCommand.START
                     elif tones_played[0] > 48000:
-                        # Give up
+                        # We haven't heard tone #0 for a whole second;
+                        # give up.
                         thread_cmd = ThreadCommand.ABORT
                         
 
@@ -376,16 +377,16 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
                 if output_channels == 2:
                     fade_multiplier = [[x,x] for x in fade_multiplier]
                 
-                if tone_positions[index]+samples <= len(tones[index]):
+                if tones_position[index]+samples <= len(tones[index]):
                     # Copy tone in one hit
                     outdata[:] = tones[index] \
-                        [tone_positions[index]:tone_positions[index]+samples] \
+                        [tones_position[index]:tones_position[index]+samples] \
                         * fade_multiplier
                 else:
                     # Need to loop back to the beginning of the tone
-                    remaining = len(tones[index])-tone_positions[index]
+                    remaining = len(tones[index])-tones_position[index]
                     outdata[:remaining] = (
-                        tones[index][tone_positions[index]:len(tones[index])] \
+                        tones[index][tones_position[index]:len(tones[index])] \
                         * fade_multiplier[:remaining]
                     )
                     outdata[remaining:] = (
@@ -394,7 +395,7 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
                     )
 
                 # Set tone position back to zero
-                tone_positions[index] = 0
+                tones_position[index] = 0
 
                 # Set number of samples played back to None to
                 # indicate that it's not currently being played
@@ -409,6 +410,9 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
                 # Increment the number of samples of silence; it was
                 # reset to zero in the STOPPING state.
                 tones_silence[index] += samples
+
+                # Set the position in the PCM back to zero
+                tones_position[index] = 0
 
                 # TEST
                 tones_cmd[index] = ToneCommand.START
@@ -482,13 +486,22 @@ def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
             #    numpy.around(dbs,1)
             #)
 
+        # Clear the first half second of the recording buffer if we've
+        # recorded more than one second
+        if rec_position > samples_per_second:
+            seconds_to_clear = 0.5 # seconds
+            samples_to_clear = int(seconds_to_clear * samples_per_second)
+            print(rec_pcm.shape)
+            rec_pcm = numpy.roll(rec_pcm, -samples_to_clear, axis=0)
+            rec_position -= samples_to_clear
+
             
     # Play first tone
     # Open a read-write stream
     stream = sd.Stream(samplerate=48000,
                        channels=2,
                        dtype=numpy.float32,
-                       latency="low",
+                       latency="high",#"low",
                        callback=callback)
 
     print("Playing...")
