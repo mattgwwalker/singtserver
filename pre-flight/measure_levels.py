@@ -35,7 +35,8 @@ class FFTAnalyser:
     def freqs(self):
         """Gives the frequencies focussed on by this analyser."""
         return self._freqs
-        
+
+    
     def run(self, rec_pcm, rec_position):
         # If we have more than the required number of samples
         # recorded, execute FFT analysis
@@ -212,7 +213,11 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             # Current state of the process
             self.process_state = ProcessState.RESET
 
+            # Instance of the Fast Fourier Transform (FFT) analyser
             self.fft_analyser = FFTAnalyser(samples_per_second)
+
+            # Variable to record when we entered the current state
+            self.state_start_time = None
 
             # Variables for the measurement of levels of silence
             self.silence_threshold_duration = 0.5 # seconds
@@ -222,6 +227,7 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             self.silence_sd = None
             self.silence_mean_threshold = 1e-6
             self.silence_sd_threshold = 1e-6
+            self.silence_max_time_in_state = 5 # seconds
 
             # Variables for tones
             self.tone_duration = 1 # second
@@ -236,10 +242,10 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             # Variables for non-silence
             self.non_silence_threshold_num_sd = 6 # number of std. deviations away from silence
             self.non_silence_threshold_duration = 0.5 # seconds of non-silence
-            self.non_silence_threshold_abort_duration = 5 # seconds waiting for non-silence
             self.non_silence_start_time = None
             self.non_silence_detected = False
             self.non_silence_abort_start_time = None
+            self.non_silence_max_time_in_state = 5 # seconds
 
             # Variables for measurement of tone0 and not-tone1
             self.tone0_levels = []
@@ -253,6 +259,7 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             self.detect_tone1_threshold_duration = 0.5 # seconds of not-not-tone1
             self.detect_tone1_start_time = None
             self.detect_tone1_detected = False
+            self.detect_tone1_max_time_in_state = 5 # seconds
 
             # Variables for measurement of tone0 and tone1
             self.tone0_tone1_levels = []
@@ -300,10 +307,11 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
         # Transitions
         # ===========
 
+        previous_state = v.process_state
+
         if v.process_state == ProcessState.RESET:
             v.process_state = ProcessState.MEASURE_SILENCE
-            
-            
+                        
         elif v.process_state == ProcessState.MEASURE_SILENCE:
             if v.silence_mean is not None and \
                v.silence_sd is not None:
@@ -318,19 +326,25 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
                     v.process_state = ProcessState.FADEIN_TONE0
                     v.non_silence_abort_start_time = time.currentTime
                     print("About to play tone.  Please increase system volume until the tone is detected.")
+                    
+            if time.currentTime - v.state_start_time > v.silence_max_time_in_state:
+                print("ERROR: We've spent too long listening to silence.  Aborting.")
+                v.process_state = ProcessState.ABORTED
 
+                
         elif v.process_state == ProcessState.FADEIN_TONE0:
             v.process_state = ProcessState.DETECT_TONE0    
 
+            
         elif v.process_state == ProcessState.DETECT_TONE0:
             if v.non_silence_detected:
                 v.process_state = ProcessState.MEASURE_TONE0
                 print("Base tone detected.  Please do not adjust system volume nor position of microphone or speakers")
-            elif (time.currentTime - v.non_silence_abort_start_time
-                  > v.non_silence_threshold_abort_duration):
-                print("Giving up waiting for non-silence; aborting.")
+
+            if time.currentTime - v.state_start_time > v.non_silence_max_time_in_state:
+                print("ERROR: We've spent too long listening for non-silence.  Aborting.")
                 v.process_state = ProcessState.ABORTED
-                
+
 
         elif v.process_state == ProcessState.MEASURE_TONE0:
             if v.tone0_mean is not None and \
@@ -342,7 +356,11 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             if v.detect_tone1_detected:
                 v.process_state = ProcessState.MEASURE_TONE0_TONE1
 
+            if time.currentTime - v.state_start_time > v.detect_tone1_max_time_in_state:
+                print("ERROR: We've spent too long listening for tone #1.  Aborting.")
+                v.process_state = ProcessState.ABORTED
                 
+
         elif v.process_state == ProcessState.MEASURE_TONE0_TONE1:
             if v.tone0_tone1_mean is not None and \
                v.tone0_tone1_sd is not None:
@@ -357,6 +375,11 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             pass
         
 
+        # Set state start time
+        if previous_state != v.process_state:
+            v.state_start_time = time.currentTime
+        
+        
         # States
         # ======
 
@@ -389,6 +412,7 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
                     print("silence_mean:",v.silence_mean)
                     print("silence_sd:", v.silence_sd)
                     print("sample size of silence:", len(v.silence_levels))
+
 
                 
         elif v.process_state == ProcessState.FADEIN_TONE0:
