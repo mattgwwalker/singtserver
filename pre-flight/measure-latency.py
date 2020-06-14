@@ -8,6 +8,7 @@ import time
 import threading
 import math
 import operator
+import wave
 
 # Fast Fourier Transform for recorded samples, specifically focused on
 # certain frequencies.
@@ -169,19 +170,30 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
     # Class to describe the current state of the process
     class ProcessState(Enum):
         RESET = 0
-        MEASURE_SILENCE = 1
-        DETECT_TONE0 = 2
-        MEASURE_TONE0 = 3
-        DETECT_TONE1 = 4
-        MEASURE_TONE0_TONE1 = 5
-        COMPLETING = 6
-        COMPLETED = 7
-        ABORTED = 8
+        MEASURE_SILENCE = 10
+        FADEIN_TONE0 = 20
+        DETECT_TONE0 = 30
+        MEASURE_TONE0 = 40
+        DETECT_TONE1 = 50
+        MEASURE_TONE0_TONE1 = 60
+        COMPLETING = 70
+        COMPLETED = 80
+        ABORTED = 90
 
 
     # Create a class to hold the shared variables
     class SharedVariables:
         def __init__(self, samples_per_second):
+            # DEBUG
+            # Create a buffer to store the outdata for analysis
+            duration = 20 # seconds
+            self.out_pcm = numpy.zeros((
+                duration*samples_per_second,
+                output_channels
+            ))
+            self.out_pcm_pos = 0
+
+            
             # Threading event on which the stream can wait
             self.event = threading.Event()
             
@@ -224,7 +236,7 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
 
             # Variables for non-silence
             self.non_silence_threshold_num_sd = 6 # number of std. deviations away from silence
-            self.non_silence_threshold_duration = 2.5#FIXME0.5 # seconds of non-silence
+            self.non_silence_threshold_duration = 0.5 # seconds of non-silence
             self.non_silence_threshold_abort_duration = 5 # seconds waiting for non-silence
             self.non_silence_start_time = None
             self.non_silence_detected = False
@@ -250,6 +262,12 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             self.tone0_tone1_mean = None
             self.tone0_tone1_sd = None
 
+            # To overcome what seems to be a bug in either sounddevice
+            # or portaudio, we need to write a complete frame of zeros
+            # in order to avoid a click when the stream closes.  See
+            # https://github.com/spatialaudio/python-sounddevice/issues/249
+            self.zero_frames_count = 0
+            
     # Create an instance of the shared variables
     v = SharedVariables(samples_per_second)
     
@@ -299,16 +317,17 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
                     v.process_state = ProcessState.ABORTED
                 else:
                     # No reason not to continue
-                    v.process_state = ProcessState.DETECT_TONE0
+                    v.process_state = ProcessState.FADEIN_TONE0
                     v.non_silence_abort_start_time = time.currentTime
                     print("About to play tone.  Please increase system volume until the tone is detected.")
+
+        elif v.process_state == ProcessState.FADEIN_TONE0:
+            v.process_state = ProcessState.DETECT_TONE0    
 
         elif v.process_state == ProcessState.DETECT_TONE0:
             if v.non_silence_detected:
                 v.process_state = ProcessState.MEASURE_TONE0
                 print("Base tone detected.  Please do not adjust system volume nor position of microphone or speakers")
-                #TEST
-                v.process_state = ProcessState.COMPLETING
             elif (time.currentTime - v.non_silence_abort_start_time
                   > v.non_silence_threshold_abort_duration):
                 print("Giving up waiting for non-silence; aborting.")
@@ -319,21 +338,25 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             if v.tone0_mean is not None and \
                v.tone0_sd is not None:
                 v.process_state = ProcessState.DETECT_TONE1
+
                 
         elif v.process_state == ProcessState.DETECT_TONE1:
             if v.detect_tone1_detected:
                 v.process_state = ProcessState.MEASURE_TONE0_TONE1
 
+                
         elif v.process_state == ProcessState.MEASURE_TONE0_TONE1:
             if v.tone0_tone1_mean is not None and \
                v.tone0_tone1_sd is not None:
-                v.process_state = ProcessState.COMPLETED
+                v.process_state = ProcessState.COMPLETING
 
+                
         elif v.process_state == ProcessState.COMPLETING:
             v.process_state = ProcessState.COMPLETED
-        
+
+            
         elif v.process_state == ProcessState.COMPLETED:
-            pass    
+            pass
         
 
         # States
@@ -356,8 +379,12 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
                 print("silence_sd:", v.silence_sd)
 
                 
+        elif v.process_state == ProcessState.FADEIN_TONE0:
+            print("Fading in tone #0")
+            v.tones[0].fadein(samples, outdata)
+            
+            
         elif v.process_state == ProcessState.DETECT_TONE0:
-            # Play tone #0
             v.tones[0].play(samples, outdata)
 
             # Calculate the number of standard deviations from silence
@@ -444,22 +471,35 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
                 
         elif v.process_state == ProcessState.COMPLETING:
             outdata[:] = numpy.zeros(outdata.shape)
-            print("Fading tone #0")
+            print("Fading out tone #0")
             v.tones[0].fadeout(samples, outdata, op=operator.iadd)
-            if False:
-                print("Fading tone #1")
-                v.tones[1].fadeout(samples, outdata, op=operator.iadd)                
+            print("Fading out tone #1")
+            v.tones[1].fadeout(samples, outdata, op=operator.iadd)                
 
             
         elif v.process_state == ProcessState.COMPLETED:
             outdata[:] = [[0,0]] * samples
-            print("Finished measuring levels")
-            raise sd.CallbackStop
+            v.zero_frames_count += 1
+            if v.zero_frames_count > 1:
+                print("Completed measuring levels")
+                raise sd.CallbackStop
 
-        elif v.process_state == ProcessState.ABORTED:
+        
+        elif v.process_state == ProcessState.ABORTING:
             outdata[:] = [[0,0]] * samples
-            print("Aborted measuring levels")
-            raise sd.CallbackAbort
+
+            
+        elif v.process_state == ProcessState.ABORTED:
+            v.zero_frames_count += 1
+            if v.zero_frames_count > 1:
+                print("Aborting measuring levels")
+                raise sd.CallbackStop
+
+            
+        # DEBUG
+        # Save outdata for analysis
+        v.out_pcm[v.out_pcm_pos:v.out_pcm_pos+samples] = outdata[:]
+        v.out_pcm_pos += samples
             
 
         
@@ -476,6 +516,17 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
     with stream:
         v.event.wait()  # Wait until measurement is finished
 
+    # Save out pcm for analysis
+    wave_file = wave.open("out.wav", "wb")
+    wave_file.setnchannels(channels[1])
+    wave_file.setsampwidth(2)
+    wave_file.setframerate(samples_per_second)
+    data = v.out_pcm[0:v.out_pcm_pos]
+    data = data * 2**15-1
+    data = data.astype(numpy.int16)
+    wave_file.writeframes(data)
+    wave_file.close()
+        
     # Done!
     print("Finished measuring levels.")
 
