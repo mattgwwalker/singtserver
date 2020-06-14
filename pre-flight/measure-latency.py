@@ -6,7 +6,8 @@ import numpy
 from enum import Enum
 import time
 import threading
-
+import math
+import operator
 
 # Fast Fourier Transform for recorded samples, specifically focused on
 # certain frequencies.
@@ -59,9 +60,14 @@ class FFTAnalyser:
 
 
 class Tone:
-    def __init__(self, freq, duration=1.0, samples_per_second=48000, channels=2):
-        # FIXME: The duration should be extended so that the PCM
-        # finishes on a zero-crossing.
+    def __init__(self, freq, duration=1.0, samples_per_second=48000, channels=2, max_level=1):
+        """Freq in Hz, duration in seconds.  Will extend the duration so that
+        a whole number of wavelengths are formed."""
+        # Extend the duration so that the PCM finishes on a
+        # zero-crossing.
+        duration_wavelength = 1 / freq
+        num_wavlengths = math.ceil(duration / duration_wavelength)
+        duration = num_wavlengths * duration_wavelength
         
         t = numpy.linspace(
             0,
@@ -78,32 +84,70 @@ class Tone:
         else:
             self._pcm = pcm
 
+        # Noramlise
+        self._pcm *= max_level
+
         self._pos = 0
 
         
         
-    def play(self, samples, outdata):
+    def play(self, samples, outdata, op = None):
+        """Op needs to be an in-place operator (see
+        https://docs.python.org/3/library/operator.html)"""
         # Ensure the number of channels is the same
         assert outdata.shape[1] == self._pcm.shape[1]
         
         if self._pos+samples <= len(self._pcm):
             # Copy tone in one hit
-            outdata[:] = self._pcm \
-                [self._pos:self._pos+samples]
+            data = self._pcm[self._pos:self._pos+samples]
+            if op is None:
+                outdata[:] = data
+            else:
+                op(outdata, data)
             self._pos += samples
         else:
             # Need to loop back to the beginning of the tone
+            print("wrapping")
             remaining = len(self._pcm)-self._pos
-            outdata[:remaining] = (
-                self._pcm[self._pos:len(self._pcm)]
-            )
-            outdata[remaining:] = (
-                self._pcm[:samples-remaining]
-            )
+            head = self._pcm[self._pos:len(self._pcm)]
+            tail = self._pcm[:samples-remaining]
+            if op is None:
+                outdata[:remaining] = head
+                outdata[remaining:] = tail
+            else:
+                op(outdata[:remaining], head)
+                op(outdata[remaining:], tail)
+
             self._pos = samples-remaining
 
 
+    def _fade(self, samples, outdata, op, from_, to_):
+        # Produce a linear fadeout multiplier
+        faded = numpy.linspace(from_, to_, samples)
 
+        # Adjust multiplier if two channels are needed
+        if outdata.shape[1] == 2:
+            faded = numpy.array([[x,x] for x in faded])
+
+        # Get the samples as if they were being played, multiplying
+        # them by the fadeout
+        self.play(samples, faded, op=operator.imul)
+
+        # Output the result
+        if op is None:
+            outdata[:] = faded
+        else:
+            op(outdata, faded)
+
+            
+    def fadein(self, samples, outdata, op=None):
+        self._fade(samples, outdata, op,
+                   from_=0, to_=1)
+
+        
+    def fadeout(self, samples, outdata, op=None):
+        self._fade(samples, outdata, op,
+                   from_=1, to_=0)
 
 
         
@@ -130,8 +174,9 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
         MEASURE_TONE0 = 3
         DETECT_TONE1 = 4
         MEASURE_TONE0_TONE1 = 5
-        COMPLETED = 6
-        ABORTED = 7
+        COMPLETING = 6
+        COMPLETED = 7
+        ABORTED = 8
 
 
     # Create a class to hold the shared variables
@@ -169,15 +214,17 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
 
             # Variables for tones
             self.tone_duration = 1 # second
+            n_tones = len(self.fft_analyser.freqs)
             self.tones = [Tone(freq,
                                self.tone_duration,
                                self.samples_per_second,
-                               output_channels)
+                               output_channels,
+                               1/n_tones)
                           for freq in self.fft_analyser.freqs]
 
             # Variables for non-silence
             self.non_silence_threshold_num_sd = 6 # number of std. deviations away from silence
-            self.non_silence_threshold_duration = 0.5 # seconds of non-silence
+            self.non_silence_threshold_duration = 2.5#FIXME0.5 # seconds of non-silence
             self.non_silence_threshold_abort_duration = 5 # seconds waiting for non-silence
             self.non_silence_start_time = None
             self.non_silence_detected = False
@@ -210,7 +257,6 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
     # buffer depends on the latency requested.
     def callback(indata, outdata, samples, time, status):
         nonlocal v
-        
         # Store Recording
         # ===============
         
@@ -261,6 +307,8 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             if v.non_silence_detected:
                 v.process_state = ProcessState.MEASURE_TONE0
                 print("Base tone detected.  Please do not adjust system volume nor position of microphone or speakers")
+                #TEST
+                v.process_state = ProcessState.COMPLETING
             elif (time.currentTime - v.non_silence_abort_start_time
                   > v.non_silence_threshold_abort_duration):
                 print("Giving up waiting for non-silence; aborting.")
@@ -281,6 +329,9 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
                v.tone0_tone1_sd is not None:
                 v.process_state = ProcessState.COMPLETED
 
+        elif v.process_state == ProcessState.COMPLETING:
+            v.process_state = ProcessState.COMPLETED
+        
         elif v.process_state == ProcessState.COMPLETED:
             pass    
         
@@ -348,17 +399,9 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
 
                         
         elif v.process_state == ProcessState.DETECT_TONE1:
-            # Temporary output buffer
-            output_buffer = numpy.zeros(outdata.shape)
-            # Play tone #0
-            v.tones[0].play(samples, output_buffer)
-            # Play tone #1
-            v.tones[1].play(samples, outdata)
-            # Combine the two tones
-            outdata += output_buffer
-            # Average the two tones to ensure we don't peak
-            outdata /= 2 
-            
+            # Play tones
+            v.tones[0].play(samples, outdata)
+            v.tones[1].play(samples, outdata, op=operator.iadd)
 
             # Calculate the number of standard deviations from not-tone1
             num_sd = (tones_level[1] - v.tone0_mean[1]) / v.tone0_sd[1]
@@ -377,18 +420,9 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             
 
         elif v.process_state == ProcessState.MEASURE_TONE0_TONE1:
-            # FIXME: The following code should be a function of some sort.
-            
-            # Temporary output buffer
-            output_buffer = numpy.zeros(outdata.shape)
-            # Play tone #0
-            v.tones[0].play(samples, output_buffer)
-            # Play tone #1
-            v.tones[1].play(samples, outdata)
-            # Combine the two tones
-            outdata += output_buffer
-            # Average the two tones to ensure we don't peak
-            outdata /= 2 
+            # Play tones
+            v.tones[0].play(samples, outdata)
+            v.tones[1].play(samples, outdata, op=operator.iadd)
 
             # Start the timer if not started
             if v.tone0_tone1_start_time is None:
@@ -408,16 +442,32 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
                 print("tone0_tone1_sd:", v.tone0_tone1_sd)
 
                 
+        elif v.process_state == ProcessState.COMPLETING:
+            outdata[:] = numpy.zeros(outdata.shape)
+            print("Fading tone #0")
+            v.tones[0].fadeout(samples, outdata, op=operator.iadd)
+            if False:
+                print("Fading tone #1")
+                v.tones[1].fadeout(samples, outdata, op=operator.iadd)                
+
+            
         elif v.process_state == ProcessState.COMPLETED:
+            outdata[:] = [[0,0]] * samples
             print("Finished measuring levels")
             raise sd.CallbackStop
 
+        elif v.process_state == ProcessState.ABORTED:
+            outdata[:] = [[0,0]] * samples
+            print("Aborted measuring levels")
+            raise sd.CallbackAbort
+            
+
         
     # Open a read-write stream
-    stream = sd.Stream(samplerate=48000,
-                       channels=2,
+    stream = sd.Stream(samplerate=samples_per_second,
+                       channels=channels,
                        dtype=numpy.float32,
-                       latency="high",#"low",  # FIXME: desired_latency
+                       latency=desired_latency,
                        callback=callback,
                        finished_callback=v.event.set)
 
@@ -442,7 +492,7 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
 # Phase One
 # =========
 # Measure latency approximately via tones.
-def phase_one(desired_latency="low", samples_per_second=48000, channels=(2,2)):
+def phase_one(levels, desired_latency="low", samples_per_second=48000, channels=(2,2)):
     """Channels are specified as a tuple of (input channels, output channels)."""
     input_channels, output_channels = channels
 
@@ -1044,9 +1094,8 @@ def measure_latency():
 
     input() # wait for enter key
 
-    levels = measure_levels()
-    print(levels)
-    #approximate_latency = phase_one()
+    levels = measure_levels(desired_latency=0.2)
+    #approximate_latency = phase_one(levels)
     #accurate_latency = phase_two(approximate_latency)
     
     
