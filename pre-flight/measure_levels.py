@@ -219,6 +219,9 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             # Variable to record when we entered the current state
             self.state_start_time = None
 
+            # Specifiy the minimum number of samples
+            self.min_num_samples = 50
+
             # Variables for the measurement of levels of silence
             self.silence_threshold_duration = 0.5 # seconds
             self.silence_levels = []
@@ -240,7 +243,7 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
                           for freq in self.fft_analyser.freqs]
 
             # Variables for non-silence
-            self.non_silence_threshold_num_sd = 6 # number of std. deviations away from silence
+            self.non_silence_threshold_num_sd = 4 # number of std. deviations away from silence
             self.non_silence_threshold_duration = 0.5 # seconds of non-silence
             self.non_silence_start_time = None
             self.non_silence_detected = False
@@ -255,7 +258,7 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             self.tone0_sd = None
 
             # Variables for detection of tone1
-            self.detect_tone1_threshold_num_sd = 6 # number of std. deviations away from not-tone1
+            self.detect_tone1_threshold_num_sd = 4 # number of std. deviations away from not-tone1
             self.detect_tone1_threshold_duration = 0.5 # seconds of not-not-tone1
             self.detect_tone1_start_time = None
             self.detect_tone1_detected = False
@@ -400,7 +403,7 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
                 if duration <= v.silence_threshold_duration:
                     # Record this level
                     v.silence_levels.append(tones_level)
-                elif len(v.silence_levels) < 50:
+                elif len(v.silence_levels) < v.min_num_samples:
                     print("Insufficient samples of silence observed; listening for another half-second")
                     v.silence_threshold_duration += 0.5 # seconds
                 else:
@@ -454,11 +457,16 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
 
             duration = time.currentTime - v.tone0_start_time
             if duration > v.tone0_threshold_duration:
-                # We've now collected enough samples
-                v.tone0_mean = numpy.mean(v.tone0_levels, axis=0)
-                v.tone0_sd = numpy.std(v.tone0_levels, axis=0)
-                print("tone0_mean:",v.tone0_mean)
-                print("tone0_sd:", v.tone0_sd)
+                if len(v.tone0_levels) >= v.min_num_samples:
+                    # We've now collected enough samples
+                    v.tone0_mean = numpy.mean(v.tone0_levels, axis=0)
+                    v.tone0_sd = numpy.std(v.tone0_levels, axis=0)
+                    print("tone0_mean:",v.tone0_mean)
+                    print("tone0_sd:", v.tone0_sd)
+                    print("tone0 number of samples:", len(v.tone0_levels))
+                else:
+                    print("We haven't collected sufficient samples; increasing sampling time by half a second")
+                    v.tone0_threshold_duration += 0.5
 
                         
         elif v.process_state == ProcessState.DETECT_TONE1:
@@ -498,11 +506,16 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
 
             duration = time.currentTime - v.tone0_tone1_start_time
             if duration > v.tone0_tone1_threshold_duration:
-                # We've now collected enough samples
-                v.tone0_tone1_mean = numpy.mean(v.tone0_tone1_levels, axis=0)
-                v.tone0_tone1_sd = numpy.std(v.tone0_tone1_levels, axis=0)
-                print("tone0_tone1_mean:",v.tone0_tone1_mean)
-                print("tone0_tone1_sd:", v.tone0_tone1_sd)
+                if len(v.tone0_tone1_levels) >= v.min_num_samples:
+                    # We've now collected enough samples
+                    v.tone0_tone1_mean = numpy.mean(v.tone0_tone1_levels, axis=0)
+                    v.tone0_tone1_sd = numpy.std(v.tone0_tone1_levels, axis=0)
+                    print("tone0_tone1_mean:",v.tone0_tone1_mean)
+                    print("tone0_tone1_sd:", v.tone0_tone1_sd)
+                    print("tone0_tone1 number of samples:", len(v.tone0_tone1_levels))
+                else:
+                    print("We haven't collected sufficient samples; increasing sampling time by half a second")
+                    v.tone0_tone1_threshold_duration += 0.5
 
                 
         elif v.process_state == ProcessState.COMPLETING:
