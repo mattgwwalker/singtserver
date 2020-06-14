@@ -108,7 +108,6 @@ class Tone:
             self._pos += samples
         else:
             # Need to loop back to the beginning of the tone
-            print("wrapping")
             remaining = len(self._pcm)-self._pos
             head = self._pcm[self._pos:len(self._pcm)]
             tail = self._pcm[:samples-remaining]
@@ -216,7 +215,7 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             self.fft_analyser = FFTAnalyser(samples_per_second)
 
             # Variables for the measurement of levels of silence
-            self.silence_seconds = 0.5 # seconds
+            self.silence_threshold_duration = 0.5 # seconds
             self.silence_levels = []
             self.silence_start_time = None
             self.silence_mean = None
@@ -303,7 +302,6 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
 
         if v.process_state == ProcessState.RESET:
             v.process_state = ProcessState.MEASURE_SILENCE
-            v.silence_start_time = time.inputBufferAdcTime
             
             
         elif v.process_state == ProcessState.MEASURE_SILENCE:
@@ -311,7 +309,7 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
                v.silence_sd is not None:
                 if any(v.silence_mean < v.silence_mean_threshold):
                     print("Implausibly low mean level detected for silence; aborting.")
-                    v.process_state = v.ProcessState.ABORTED
+                    v.process_state = ProcessState.ABORTED
                 elif any(v.silence_sd < v.silence_sd_threshold):
                     print("Implausibly low standard deviation detected for silence; aborting.")
                     v.process_state = ProcessState.ABORTED
@@ -366,17 +364,31 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             pass
             
         elif v.process_state == ProcessState.MEASURE_SILENCE:
-            duration = time.currentTime - v.silence_start_time
-            if duration <= v.silence_seconds:
-                if tones_level is not None:
+            # Check if the sample is acceptable:
+            if tones_level is not None and all(tones_level > 0):
+                # Levels are acceptable
+
+                # If we haven't started timing, do so now
+                if v.silence_start_time is None:
+                    v.silence_start_time = time.inputBufferAdcTime
+
+                # Check if we've listened to enough silence
+                duration = time.currentTime - v.silence_start_time
+                if duration <= v.silence_threshold_duration:
+                    # Record this level
                     v.silence_levels.append(tones_level)
-            else:
-                # We've now collected enough samples
-                #print("silence_levels:",silence_levels)
-                v.silence_mean = numpy.mean(v.silence_levels, axis=0)
-                v.silence_sd = numpy.std(v.silence_levels, axis=0)
-                print("silence_mean:",v.silence_mean)
-                print("silence_sd:", v.silence_sd)
+                elif len(v.silence_levels) < 50:
+                    print("Insufficient samples of silence observed; listening for another half-second")
+                    v.silence_threshold_duration += 0.5 # seconds
+                else:
+                    # We've now collected enough sample levels;
+                    # calculate the mean and standard deviation of the
+                    # samples taken.
+                    v.silence_mean = numpy.mean(v.silence_levels, axis=0)
+                    v.silence_sd = numpy.std(v.silence_levels, axis=0)
+                    print("silence_mean:",v.silence_mean)
+                    print("silence_sd:", v.silence_sd)
+                    print("sample size of silence:", len(v.silence_levels))
 
                 
         elif v.process_state == ProcessState.FADEIN_TONE0:
@@ -485,14 +497,11 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
                 raise sd.CallbackStop
 
         
-        elif v.process_state == ProcessState.ABORTING:
-            outdata[:] = [[0,0]] * samples
-
-            
         elif v.process_state == ProcessState.ABORTED:
             v.zero_frames_count += 1
             if v.zero_frames_count > 1:
                 print("Aborting measuring levels")
+                print(sd.query_devices())
                 raise sd.CallbackStop
 
             
@@ -1145,7 +1154,7 @@ def measure_latency():
 
     input() # wait for enter key
 
-    levels = measure_levels(desired_latency=0.2)
+    levels = measure_levels(desired_latency="high")
     #approximate_latency = phase_one(levels)
     #accurate_latency = phase_two(approximate_latency)
     
