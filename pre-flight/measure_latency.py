@@ -9,8 +9,7 @@ import threading
 import math
 import operator
 import wave
-from measure_levels import measure_levels
-
+from measure_levels import measure_levels, FFTAnalyser, Tone
 
 # Phase One
 # =========
@@ -19,58 +18,74 @@ def phase_one(levels, desired_latency="low", samples_per_second=48000, channels=
     """Channels are specified as a tuple of (input channels, output channels)."""
     input_channels, output_channels = channels
 
-    # Generate the tones required.  Frequencies chosen from mid-points
-    # of FFT analysis.
-    fft_n = 256 # Approximately 5ms at 48kHz
-    fft_freqs = numpy.fft.rfftfreq(fft_n) * samples_per_second
-    freqs = [375, 1125, 2250]
+    # Class to describe the current state of the process
+    class ProcessState(Enum):
+        RESET = 0
+        DETECT_TONE0 = 10
+        DETECT_TONE0_TONE1 = 60
+        COMPLETING = 70
+        COMPLETED = 80
+        ABORTED = 90
 
-    # Get index of desired frequencies
-    freq_indices = []
-    for freq in freqs:
-        indices = numpy.where(fft_freqs == freq)
-        assert len(indices) == 1
-        freq_indices.append(indices[0][0])
+    # Create a class to hold the shared variables
+    class SharedVariables:
+        def __init__(self, samples_per_second):
+            # DEBUG
+            # Create a buffer to store the outdata for analysis
+            duration = 20 # seconds
+            self.out_pcm = numpy.zeros((
+                duration*samples_per_second,
+                output_channels
+            ))
+            self.out_pcm_pos = 0
 
-    # FIXME: This duration should be shorter, but it needs to finish
-    # at a zero-crossing of the sine wave.  A quick fix is just to
-    # make the duration much longer than it needs to be.
-    duration = 10.0 # seconds
-    t = numpy.linspace(0, duration, int(duration * samples_per_second), False)
-
-    tones = []
-    for freq in freqs:
-        tone = numpy.sin(freq * t * 2 * numpy.pi)
-
-        if output_channels == 2:
-            two_channels = [[x,x] for x in tone]
-            tones.append(numpy.array(two_channels, dtype=numpy.float32))
-        else:
-            tones.append(tone)
-
-        del tone
-
+            # Threading event on which the stream can wait
+            self.event = threading.Event()
+            
+            self.samples_per_second = samples_per_second
         
-    # Normalise the tones so that when combined they'll never clip
-    for index,tone in enumerate(tones):
-        tones[index] = tone / len(tones)
-        
-        
-    # Initialise the current position for each tone
-    tones_position = [0] * len(tones)
+            # Allocate space for recording
+            max_recording_duration = 2 #seconds
+            max_recording_samples = max_recording_duration * samples_per_second
+            self.rec_pcm = numpy.zeros((
+                max_recording_samples,
+                input_channels
+            ))
+
+            # Initialise recording position
+            self.rec_position = 0
+
+            # Current state of the process
+            self.process_state = ProcessState.RESET
+
+            # Instance of the Fast Fourier Transform (FFT) analyser
+            self.fft_analyser = FFTAnalyser(samples_per_second)
+
+            # Variable to record when we entered the current state
+            self.state_start_time = None
+
+            # Variables for tones
+            self.tone_duration = 1 # second
+            n_tones = len(self.fft_analyser.freqs)
+            self.tones = [Tone(freq,
+                               self.tone_duration,
+                               self.samples_per_second,
+                               output_channels,
+                               1/n_tones)
+                          for freq in self.fft_analyser.freqs]
+
+            # Variables for levels
+            self.tone0_mean = levels["tone0_mean"]
+            self.tone0_sd = levels["tone0_sd"]
+            self.tone0_tone1_mean = levels["tone0_tone1_mean"]
+            self.tone0_tone1_sd = levels["tone0_tone1_sd"]
 
 
-    # Allocate space for recording
-    max_recording_duration = 2 #seconds
-    max_recording_samples = max_recording_duration * samples_per_second
-    rec_pcm = numpy.zeros((
-        max_recording_samples,
-        input_channels
-    ))
 
-    # Initialise recording position
-    rec_position = 0
-
+    # FIXME: The code below isn't functional, but it useful to copy
+    # from
+    return
+            
     # Initialise tones detected, which stores the number of samples
     # for which the tone has been continuously detected.
     tones_detected = [0] * len(tones)
@@ -149,8 +164,8 @@ def phase_one(levels, desired_latency="low", samples_per_second=48000, channels=
     # Callback for when the recording buffer is ready.  The size of the
     # buffer depends on the latency requested.
     def callback(indata, outdata, samples, time, status):
-        nonlocal rec_pcm, rec_position, tones_position, tones_detected, tones_played
-        nonlocal tones_silence, latencies, thread_state, thread_cmd
+        #nonlocal rec_pcm, rec_position, tones_position, tones_detected, tones_played
+        #nonlocal tones_silence, latencies, thread_state, thread_cmd
 
         # FIXME: These aren't necessary when finished
         assert len(indata) == len(outdata)
@@ -188,23 +203,6 @@ def phase_one(levels, desired_latency="low", samples_per_second=48000, channels=
                 n=fft_n
             )
             y = numpy.abs(y)
-
-
-
-            # TEST
-            # Let's try measuring the levels of silence
-            for index, freq_index in enumerate(freq_indices):
-                level = y[freq_index]
-                print("level:", level)
-                tones_noise_levels[index].append(level)
-
-            return
-
-
-
-
-
-
 
 
 
@@ -617,8 +615,8 @@ def measure_latency():
 
     input() # wait for enter key
 
-    levels = measure_levels(desired_latency="high")
-    #approximate_latency = phase_one(levels)
+    levels = measure_levels(desired_latency="low")
+    approximate_latency = phase_one(levels)
     #accurate_latency = phase_two(approximate_latency)
     
     
