@@ -14,8 +14,8 @@ import wave
 # certain frequencies.
 class FFTAnalyser:
     def __init__(self, samples_per_second):
-        # Number of samples for FFT analysis.  Approximately 5ms at
-        # 48kHz.
+        # Number of samples for FFT analysis.  256 samples is
+        # approximately 5ms at 48kHz.
         self._n = 256 
 
         fft_freqs = numpy.fft.rfftfreq(self._n) * samples_per_second
@@ -260,7 +260,7 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             # Variables for measurement of tone0 and not-tone1
             self.tone0_levels = []
             self.tone0_start_time = None
-            self.tone0_threshold_duration = 0.5 # seconds of tone0 and not tone1
+            self.tone0_threshold_duration = 1.5 # seconds of tone0 and not tone1
             self.tone0_mean = None
             self.tone0_sd = None
 
@@ -274,7 +274,7 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             # Variables for measurement of tone0 and tone1
             self.tone0_tone1_levels = []
             self.tone0_tone1_start_time = None
-            self.tone0_tone1_threshold_duration = 0.5 # seconds of tone0 and tone1
+            self.tone0_tone1_threshold_duration = 1.5 # seconds of tone0 and tone1
             self.tone0_tone1_mean = None
             self.tone0_tone1_sd = None
 
@@ -443,7 +443,7 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             # Calculate the number of standard deviations from silence
             num_sd = (tones_level[0] - v.silence_mean[0]) / v.silence_sd[0]
 
-            if num_sd > v.non_silence_threshold_num_sd:
+            if abs(num_sd) > v.non_silence_threshold_num_sd:
                 if v.non_silence_start_time is None:
                     v.non_silence_start_time = time.currentTime
                 else:
@@ -491,7 +491,7 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             # Calculate the number of standard deviations from not-tone1
             num_sd = (tones_level[1] - v.tone0_mean[1]) / v.tone0_sd[1]
 
-            if num_sd > v.detect_tone1_threshold_num_sd:
+            if abs(num_sd) > v.detect_tone1_threshold_num_sd:
                 if v.detect_tone1_start_time is None:
                     v.detect_tone1_start_time = time.currentTime
                 else:
