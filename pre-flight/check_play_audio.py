@@ -4,7 +4,8 @@ import time
 import sounddevice as sd
 
 def check_play_audio():
-    filename = "light.opus"
+    #filename = "light.opus"
+    filename = "warm-up.opus"
 
     print("")
     print("Playing Audio")
@@ -29,8 +30,8 @@ def check_play_audio():
     print("\nCan you hear the audio?")
     print("Type 'y' followed by enter if you can hear the audio correctly.")
     print("")
-    print("If you can't hear Choeur Adleisia singing 'Light', then try turning up")
-    print("the volume on your speakers.  If your speakers have an 'on' switch, check")
+    print("If you can't hear Choeur Adleisia warming up, then try turning up the")
+    print("volume on your speakers.  If your speakers have an 'on' switch, check")
     print("that they're turned on.  Check that you haven't muted your speakers.")
     print("Check the sound output settings on your operating system.")
     print("")
