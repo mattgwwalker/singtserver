@@ -36,7 +36,7 @@ class FFTAnalyser:
         """Gives the frequencies focussed on by this analyser."""
         return self._freqs
 
-    
+
     def run(self, rec_pcm, rec_position):
         # If we have more than the required number of samples
         # recorded, execute FFT analysis
@@ -92,6 +92,10 @@ class Tone:
         self._pos = 0
 
         
+    def reset(self):
+        """Resets the position index to zero."""
+        self._pos = 0
+    
         
     def play(self, samples, outdata, op = None):
         """Op needs to be an in-place operator (see
@@ -149,6 +153,9 @@ class Tone:
     def fadeout(self, samples, outdata, op=None):
         self._fade(samples, outdata, op,
                    from_=1, to_=0)
+        # Reset the position index
+        self.reset()
+
 
 
         
@@ -336,13 +343,14 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
 
                 
         elif v.process_state == ProcessState.FADEIN_TONE0:
-            v.process_state = ProcessState.DETECT_TONE0    
+            v.process_state = ProcessState.DETECT_TONE0
 
             
         elif v.process_state == ProcessState.DETECT_TONE0:
             if v.non_silence_detected:
                 v.process_state = ProcessState.MEASURE_TONE0
-                print("Base tone detected.  Please do not adjust system volume nor position of microphone or speakers")
+                print("Base tone detected.  Please do not adjust system volume nor position")
+                print("of microphone or speakers")
 
             if time.currentTime - v.state_start_time > v.non_silence_max_time_in_state:
                 print("ERROR: We've spent too long listening for non-silence.  Aborting.")
@@ -387,9 +395,15 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
         # ======
 
         if v.process_state == ProcessState.RESET:
-            pass
+            # It's a requirement that outdata is always actively
+            # filled
+            outdata.fill(0)
             
         elif v.process_state == ProcessState.MEASURE_SILENCE:
+            # It's a requirement that outdata is always actively
+            # filled
+            outdata.fill(0)
+            
             # Check if the sample is acceptable:
             if tones_level is not None and all(tones_level > 0):
                 # Levels are acceptable
@@ -416,7 +430,6 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
                     print("silence_sd:", v.silence_sd)
                     print("sample size of silence:", len(v.silence_levels))
 
-
                 
         elif v.process_state == ProcessState.FADEIN_TONE0:
             print("Fading in tone #0")
@@ -424,6 +437,7 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             
             
         elif v.process_state == ProcessState.DETECT_TONE0:
+            # Play tone #0
             v.tones[0].play(samples, outdata)
 
             # Calculate the number of standard deviations from silence
@@ -519,22 +533,23 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
 
                 
         elif v.process_state == ProcessState.COMPLETING:
-            outdata[:] = numpy.zeros(outdata.shape)
+            outdata.fill(0)
             print("Fading out tone #0")
             v.tones[0].fadeout(samples, outdata, op=operator.iadd)
-            print("Fading out tone #1")
-            v.tones[1].fadeout(samples, outdata, op=operator.iadd)                
+            #print("Fading out tone #1")
+            #v.tones[1].fadeout(samples, outdata, op=operator.iadd)                
 
             
         elif v.process_state == ProcessState.COMPLETED:
-            outdata[:] = [[0,0]] * samples
+            outdata.fill(0)
             v.zero_frames_count += 1
             if v.zero_frames_count > 1:
-                print("Completed measuring levels")
+                print("Successfully completed measuring levels")
                 raise sd.CallbackStop
 
         
         elif v.process_state == ProcessState.ABORTED:
+            outdata.fill(0)
             v.zero_frames_count += 1
             if v.zero_frames_count > 1:
                 print("Aborting measuring levels")
@@ -549,6 +564,9 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
         if v.out_pcm_pos > len(v.out_pcm):
             print("ERROR: Buffer for PCM of output is full; aborting")
             raise sd.CallbackAbort
+
+        if stream.cpu_load > 0.25:
+            print("High CPU usage:", round(stream.cpu_load,3))
             
 
         
@@ -560,6 +578,8 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
                        callback=callback,
                        finished_callback=v.event.set)
 
+    # Share reference to stream with callback
+    v.stream = stream
 
     print("Measuring levels...")
     with stream:
@@ -612,5 +632,8 @@ if __name__ == "__main__":
 
     input() # wait for enter key
 
-    levels = measure_levels(desired_latency="high")
+    levels = measure_levels(
+        desired_latency="high"
+        #desired_latency="low"
+    )
     print(levels)
