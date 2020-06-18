@@ -13,7 +13,7 @@ from measure_levels import measure_levels, FFTAnalyser, Tone
 # Phase One
 # =========
 # Measure latency approximately via tones.
-def phase_one(levels, desired_latency="high", samples_per_second=48000, channels=(2,2)):
+def measure_latency_phase_one(levels, desired_latency="high", samples_per_second=48000, channels=(2,2)):
     """Channels are specified as a tuple of (input channels, output channels)."""
     input_channels, output_channels = channels
 
@@ -334,22 +334,23 @@ def phase_one(levels, desired_latency="high", samples_per_second=48000, channels
                        channels=channels,
                        dtype=numpy.float32,
                        latency=desired_latency,
-                       callback=callback)
+                       callback=callback,
+                       finished_callback=v.event.set)
 
     print("Measuring latency...")
     with stream:
-        input()  # Wait until playback is finished
+        v.event.wait()  # Wait until measurement is finished
 
     # Done!
     print("Finished.")
 
 
         
-def measure_latency_phase_one(desired_latency="high"):
+def _measure_latency(desired_latency="high"):
     print("Desired latency:", desired_latency)
     levels = measure_levels(desired_latency)
     print("\n")
-    approximate_latency = phase_one(levels, desired_latency)
+    approximate_latency = measure_latency_phase_one(levels, desired_latency)
     
     
 
@@ -383,4 +384,4 @@ if __name__ == "__main__":
 
     input() # wait for enter key
 
-    measure_latency_phase_one("high")
+    _measure_latency("high")
