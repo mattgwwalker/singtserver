@@ -21,9 +21,11 @@ def phase_one(levels, desired_latency="high", samples_per_second=48000, channels
     # Class to describe the current state of the process
     class ProcessState(Enum):
         RESET = 0
-        FADEIN_TONE0 = 5
+        START_TONE0 = 5
         DETECT_TONE0 = 10
+        START_TONE0_TONE1 = 15
         DETECT_TONE0_TONE1 = 20
+        CLEANUP = 25
         COMPLETING = 30
         COMPLETED = 40
         ABORTED = 50
@@ -81,12 +83,25 @@ def phase_one(levels, desired_latency="high", samples_per_second=48000, channels
             self.tone0_tone1_mean = levels["tone0_tone1_mean"]
             self.tone0_tone1_sd = levels["tone0_tone1_sd"]
 
-            # Variables for DETECT_TONE0
-            self.detect_tone0_start_time = None
+            # Variables for START_TONE0
+            self.start_tone0_start_play_time = None
+
+            # Variables for DETECT_TONE0            
+            self.detect_tone0_start_detect_time = None
             self.detect_tone0_threshold_num_sd = 4
             self.detect_tone0_threshold_duration = 0.2 # seconds
             self.detect_tone0_max_time_in_state = 5 # seconds
             self.detect_tone0_detected = False
+            
+            # Variables for START_TONE0_TONE1
+            self.start_tone0_tone1_start_play_time = None
+
+            # Variables for DETECT_TONE0_TONE1
+            self.detect_tone0_tone1_start_detect_time = None
+            self.detect_tone0_tone1_threshold_num_sd = 4
+            self.detect_tone0_tone1_threshold_duration = 0.2 # seconds
+            self.detect_tone0_tone1_max_time_in_state = 5 # seconds
+            self.detect_tone0_tone1_detected = False
             
 
     # Create an instance of the shared variables
@@ -141,18 +156,32 @@ def phase_one(levels, desired_latency="high", samples_per_second=48000, channels
         previous_state = v.process_state
 
         if v.process_state == ProcessState.RESET:
-            v.process_state = ProcessState.DETECT_TONE0
+            v.process_state = ProcessState.START_TONE0
 
+        elif v.process_state == ProcessState.START_TONE0:
+            v.process_state = ProcessState.DETECT_TONE0
+            
         elif v.process_state == ProcessState.DETECT_TONE0:
             if v.detect_tone0_detected:
-                v.process_state = ProcessState.DETECT_TONE0_TONE1
+                v.process_state = ProcessState.START_TONE0_TONE1
             
             if time.currentTime - v.state_start_time > v.detect_tone0_max_time_in_state:
                 print("ERROR: We've spent too long listening for tone #0.  Aborting.")
                 v.process_state = ProcessState.ABORTED
 
+        elif v.process_state == ProcessState.START_TONE0_TONE1:
+            v.process_state = ProcessState.DETECT_TONE0_TONE1
+            
         elif v.process_state == ProcessState.DETECT_TONE0_TONE1:
-            pass
+            if v.detect_tone0_tone1_detected:
+                v.process_state = ProcessState.CLEANUP
+            
+            if time.currentTime - v.state_start_time > v.detect_tone0_tone1_max_time_in_state:
+                print("ERROR: We've spent too long listening for tone #0.  Aborting.")
+                v.process_state = ProcessState.ABORTED
+
+        elif v.process_state == ProcessState.CLEANUP:
+            v.process_state = ProcessState.COMPLETED
                 
         elif v.process_state == ProcessState.ABORTED:
             pass    
@@ -172,6 +201,16 @@ def phase_one(levels, desired_latency="high", samples_per_second=48000, channels
             outdata.fill(0)
 
             
+        elif v.process_state == ProcessState.START_TONE0:
+            # It's a requirement that outdata is always actively
+            # filled
+            outdata.fill(0)
+            
+            # Start the timer from the moment the system says it will
+            # play the audio.
+            v.start_tone0_start_play_time = time.outputBufferDacTime
+
+            
         elif v.process_state == ProcessState.DETECT_TONE0:
             # Play tone #0
             v.tones[0].play(samples, outdata)
@@ -180,62 +219,105 @@ def phase_one(levels, desired_latency="high", samples_per_second=48000, channels
                 # Are we hearing the tone?  Ensure we're within an
                 # acceptable number of standard deviations from the mean.
                 num_sd = (tones_level[0] - v.tone0_mean[0]) / v.tone0_sd[0]
-                print(abs(num_sd), tones_level[0])
 
                 if abs(num_sd) < v.detect_tone0_threshold_num_sd:
-                    if v.detect_tone0_start_time is None:
-                        v.detect_tone0_start_time = time.currentTime
+                    if v.detect_tone0_start_detect_time is None:
+                        v.detect_tone0_start_detect_time = time.inputBufferAdcTime
                     else:
-                        duration = time.currentTime - v.detect_tone0_start_time
-                        if duration > v.detect_tone0_threshold_duration:
+                        detect_duration = time.inputBufferAdcTime - v.detect_tone0_start_detect_time
+                        if detect_duration > v.detect_tone0_threshold_duration:
                             print("Tone0 detected")
                             v.detect_tone0_detected = True
+
+                            # Calculate latency to the moment the
+                            # system says it recorded the audio.
+                            latency = (
+                                v.detect_tone0_start_detect_time
+                                - v.start_tone0_start_play_time
+                                - v.fft_analyser.window_width
+                            )
+                            print("Latency: ",round(latency*1000), "ms")
+                            
                 else:
                     # Reset timer
-                    print("Resetting timer")
                     v.detect_tone0_start_time = None
             else:
                 print("tones_levels was None")
 
+                
+        elif v.process_state == ProcessState.START_TONE0_TONE1:
+            # It's a requirement that outdata is always actively
+            # filled
+            outdata.fill(0)
+            
+            # Start the timer from the moment the system says it will
+            # play the audio.
+            v.start_tone0_tone1_start_play_time = time.outputBufferDacTime
+
+            
         elif v.process_state == ProcessState.DETECT_TONE0_TONE1:
             # Play both tones
             v.tones[0].play(samples, outdata)
             v.tones[1].play(samples, outdata, op=operator.iadd)
 
-            # if tones_level is not None:
-            #     # Are we hearing the tones?  Ensure we're within an
-            #     # acceptable number of standard deviations from the mean.
-            #     num_sd = (tones_level[0] - v.tone0_mean[0]) / v.tone0_sd[0]
-            #     print(abs(num_sd), tones_level[0])
+            if tones_level is not None:
+                # Are we hearing the tone?  Ensure we're within an
+                # acceptable number of standard deviations from the mean.
+                num_sd = abs((tones_level - v.tone0_tone1_mean) / v.tone0_tone1_sd)
 
-            #     if abs(num_sd) < v.detect_tone0_threshold_num_sd:
-            #         if v.detect_tone0_start_time is None:
-            #             v.detect_tone0_start_time = time.currentTime
-            #         else:
-            #             duration = time.currentTime - v.detect_tone0_start_time
-            #             if duration > v.detect_tone0_threshold_duration:
-            #                 print("Tone0 detected")
-            #                 v.detect_tone0_detected = True
-            #     else:
-            #         # Reset timer
-            #         print("Resetting timer")
-            #         v.detect_tone0_start_time = None
-            # else:
-            #     print("tones_levels was None")
+                # FIXME: How should I compare two normal distributions?
+                if all(num_sd < v.detect_tone0_tone1_threshold_num_sd):
+                    if v.detect_tone0_tone1_start_detect_time is None:
+                        v.detect_tone0_tone1_start_detect_time = time.inputBufferAdcTime
+                    else:
+                        detect_duration = time.inputBufferAdcTime - v.detect_tone0_tone1_start_detect_time
+                        if detect_duration > v.detect_tone0_tone1_threshold_duration:
+                            print("Tone0 and Tone1 detected")
+                            v.detect_tone0_tone1_detected = True
+
+                            # Calculate latency to the moment the
+                            # system says it recorded the audio.
+                            latency = (
+                                v.detect_tone0_tone1_start_detect_time
+                                - v.start_tone0_tone1_start_play_time
+                                - v.fft_analyser.window_width
+                            )
+                            print("Latency: ",round(latency*1000), "ms")
+                            
+                else:
+                    # Reset timer
+                    v.detect_tone0_tone1_start_time = None
+            else:
+                print("tones_levels was None")
+
                 
+        elif v.process_state == ProcessState.CLEANUP:
+            # Actively fill outdata with zeros
+            outdata.fill(0)
+            
+                
+        elif v.process_state == ProcessState.COMPLETED:
+            # Actively fill outdata with zeros
+            outdata.fill(0)
+            print("Completed phase one latency measurement")
+            raise sd.CallbackStop
+
+        
         elif v.process_state == ProcessState.ABORTED:
             # Actively fill outdata with zeros
             outdata.fill(0)
+            print("Aborted phase one latency measurement")
             raise sd.CallbackAbort
 
     
 
     # Play first tone
     # Open a read-write stream
-    stream = sd.Stream(samplerate=48000,
-                       channels=2,
+    print("STREAM's Desired latency:", desired_latency)
+    stream = sd.Stream(samplerate=samples_per_second,
+                       channels=channels,
                        dtype=numpy.float32,
-                       latency="high",#"low",
+                       latency=desired_latency,
                        callback=callback)
 
     print("Measuring latency...")
@@ -741,6 +823,7 @@ def phase_two(approximate_latency):
 
 
 def measure_latency(desired_latency="high"):
+    print("Desired latency:", desired_latency)
     levels = measure_levels(desired_latency)
     print("\n")
     approximate_latency = phase_one(levels, desired_latency)
@@ -778,4 +861,4 @@ if __name__ == "__main__":
 
     input() # wait for enter key
 
-    measure_latency("high")
+    measure_latency("low")
