@@ -18,6 +18,9 @@ def check_play_audio():
         default_device_string = device_strings[default_input_index]["name"]
         print("Selected input device:", default_device_string)
 
+        max_input_channels = device_strings[default_input_index]["max_input_channels"]
+        print("Maximum number of input channels:", max_input_channels)
+
         print("\nWhen you are ready to record, press enter.  Recording will start immediately")
         print("and last for three seconds.")
         user_input = input()
@@ -26,7 +29,7 @@ def check_play_audio():
         duration = 3 # seconds
         samples_per_second = 48000
         samples_to_record = duration * samples_per_second
-        channels = 2 # FIXME
+        channels = max_input_channels
         audio = sd.rec(
             samples_to_record,
             samplerate = samples_per_second,
