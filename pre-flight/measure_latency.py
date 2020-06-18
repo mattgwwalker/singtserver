@@ -89,7 +89,7 @@ def phase_one(levels, desired_latency="high", samples_per_second=48000, channels
             # Variables for DETECT_TONE0            
             self.detect_tone0_start_detect_time = None
             self.detect_tone0_threshold_num_sd = 4
-            self.detect_tone0_threshold_duration = 0.2 # seconds
+            self.detect_tone0_threshold_duration = 0.5 # seconds
             self.detect_tone0_max_time_in_state = 5 # seconds
             self.detect_tone0_detected = False
             
@@ -99,10 +99,13 @@ def phase_one(levels, desired_latency="high", samples_per_second=48000, channels
             # Variables for DETECT_TONE0_TONE1
             self.detect_tone0_tone1_start_detect_time = None
             self.detect_tone0_tone1_threshold_num_sd = 4
-            self.detect_tone0_tone1_threshold_duration = 0.2 # seconds
+            self.detect_tone0_tone1_threshold_duration = 0.5 # seconds
             self.detect_tone0_tone1_max_time_in_state = 5 # seconds
             self.detect_tone0_tone1_detected = False
-            
+
+            # Variables for CLEANUP
+            self.cleanup_cycles = 0
+            self.cleanup_cycles_threshold = 3
 
     # Create an instance of the shared variables
     v = SharedVariables(samples_per_second)
@@ -181,7 +184,10 @@ def phase_one(levels, desired_latency="high", samples_per_second=48000, channels
                 v.process_state = ProcessState.ABORTED
 
         elif v.process_state == ProcessState.CLEANUP:
-            v.process_state = ProcessState.COMPLETED
+            if v.cleanup_cycles > v.cleanup_cycles_threshold:
+                v.process_state = ProcessState.COMPLETED
+            else:
+                v.process_state = ProcessState.START_TONE0
                 
         elif v.process_state == ProcessState.ABORTED:
             pass    
@@ -218,9 +224,10 @@ def phase_one(levels, desired_latency="high", samples_per_second=48000, channels
             if tones_level is not None:
                 # Are we hearing the tone?  Ensure we're within an
                 # acceptable number of standard deviations from the mean.
-                num_sd = (tones_level[0] - v.tone0_mean[0]) / v.tone0_sd[0]
+                num_sd = abs((tones_level - v.tone0_mean) / v.tone0_sd)
 
-                if abs(num_sd) < v.detect_tone0_threshold_num_sd:
+                # FIXME: How should I compare two normal distributions?
+                if all(num_sd < v.detect_tone0_threshold_num_sd):
                     if v.detect_tone0_start_detect_time is None:
                         v.detect_tone0_start_detect_time = time.inputBufferAdcTime
                     else:
@@ -240,7 +247,7 @@ def phase_one(levels, desired_latency="high", samples_per_second=48000, channels
                             
                 else:
                     # Reset timer
-                    v.detect_tone0_start_time = None
+                    v.detect_tone0_start_detect_time = None
             else:
                 print("tones_levels was None")
 
@@ -264,10 +271,12 @@ def phase_one(levels, desired_latency="high", samples_per_second=48000, channels
                 # Are we hearing the tone?  Ensure we're within an
                 # acceptable number of standard deviations from the mean.
                 num_sd = abs((tones_level - v.tone0_tone1_mean) / v.tone0_tone1_sd)
+                #print(num_sd)
 
                 # FIXME: How should I compare two normal distributions?
                 if all(num_sd < v.detect_tone0_tone1_threshold_num_sd):
                     if v.detect_tone0_tone1_start_detect_time is None:
+                        #print("Detected")
                         v.detect_tone0_tone1_start_detect_time = time.inputBufferAdcTime
                     else:
                         detect_duration = time.inputBufferAdcTime - v.detect_tone0_tone1_start_detect_time
@@ -286,7 +295,8 @@ def phase_one(levels, desired_latency="high", samples_per_second=48000, channels
                             
                 else:
                     # Reset timer
-                    v.detect_tone0_tone1_start_time = None
+                    #print("Resetting")
+                    v.detect_tone0_tone1_start_detect_time = None
             else:
                 print("tones_levels was None")
 
@@ -294,6 +304,15 @@ def phase_one(levels, desired_latency="high", samples_per_second=48000, channels
         elif v.process_state == ProcessState.CLEANUP:
             # Actively fill outdata with zeros
             outdata.fill(0)
+
+            # Reset key variables
+            v.detect_tone0_start_detect_time = None            
+            v.detect_tone0_detected = False
+            v.detect_tone0_tone1_start_detect_time = None            
+            v.detect_tone0_tone1_detected = False
+
+            # Increment the number of cleanup cycles
+            v.cleanup_cycles += 1
             
                 
         elif v.process_state == ProcessState.COMPLETED:
