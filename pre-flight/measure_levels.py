@@ -16,7 +16,9 @@ class FFTAnalyser:
     def __init__(self, samples_per_second):
         # Number of samples for FFT analysis.  256 samples is
         # approximately 5ms at 48kHz.
-        self._n = 256 
+        self._n = 256
+
+        self._samples_per_second = samples_per_second
 
         fft_freqs = numpy.fft.rfftfreq(self._n) * samples_per_second
         self._freq_indices = [2, 5]
@@ -36,6 +38,12 @@ class FFTAnalyser:
         """Gives the frequencies focussed on by this analyser."""
         return self._freqs
 
+
+    @property
+    def window_width(self):
+        """The width of the FFT window in seconds."""
+        return self._n / self._samples_per_second
+    
 
     def run(self, rec_pcm, rec_position):
         # If we have more than the required number of samples
@@ -283,6 +291,9 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             # in order to avoid a click when the stream closes.  See
             # https://github.com/spatialaudio/python-sounddevice/issues/249
             self.zero_frames_count = 0
+
+            # Variable to store error during audio processing
+            self.error = None
             
     # Create an instance of the shared variables
     v = SharedVariables(samples_per_second)
@@ -326,10 +337,10 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             if v.silence_mean is not None and \
                v.silence_sd is not None:
                 if any(v.silence_mean < v.silence_mean_threshold):
-                    print("Implausibly low mean level detected for silence; aborting.")
+                    v.error = "Implausibly low mean level detected for silence; aborting."
                     v.process_state = ProcessState.ABORTED
                 elif any(v.silence_sd < v.silence_sd_threshold):
-                    print("Implausibly low standard deviation detected for silence; aborting.")
+                    v.error = "Implausibly low standard deviation detected for silence; aborting."
                     v.process_state = ProcessState.ABORTED
                 else:
                     # No reason not to continue
@@ -338,7 +349,7 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
                     print("About to play tone.  Please increase system volume until the tone is detected.")
                     
             if time.currentTime - v.state_start_time > v.silence_max_time_in_state:
-                print("ERROR: We've spent too long listening to silence.  Aborting.")
+                v.error = "Spent too long listening to silence."
                 v.process_state = ProcessState.ABORTED
 
                 
@@ -353,7 +364,7 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
                 print("of microphone or speakers")
 
             if time.currentTime - v.state_start_time > v.non_silence_max_time_in_state:
-                print("ERROR: We've spent too long listening for non-silence.  Aborting.")
+                v.error = "Spent too long listening for non-silence."
                 v.process_state = ProcessState.ABORTED
 
 
@@ -368,7 +379,7 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
                 v.process_state = ProcessState.MEASURE_TONE0_TONE1
 
             if time.currentTime - v.state_start_time > v.detect_tone1_max_time_in_state:
-                print("ERROR: We've spent too long listening for tone #1.  Aborting.")
+                v.error = "Spent too long listening for tone #1."
                 v.process_state = ProcessState.ABORTED
                 
 
@@ -552,7 +563,7 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             outdata.fill(0)
             v.zero_frames_count += 1
             if v.zero_frames_count > 1:
-                print("Aborting measuring levels")
+                print("Aborting measuring levels: "+v.error)
                 print(sd.query_devices())
                 raise sd.CallbackStop
 
@@ -562,7 +573,7 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
         v.out_pcm[v.out_pcm_pos:v.out_pcm_pos+samples] = outdata[:]
         v.out_pcm_pos += samples
         if v.out_pcm_pos > len(v.out_pcm):
-            print("ERROR: Buffer for PCM of output is full; aborting")
+            v.error = "Buffer for PCM of output is full"
             raise sd.CallbackAbort
 
         if stream.cpu_load > 0.25:
@@ -595,7 +606,11 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
     data = data.astype(numpy.int16)
     wave_file.writeframes(data)
     wave_file.close()
-        
+
+    # Ensure that we have valid results
+    if v.error is not None:
+        raise Exception("Failed to detect levels of the different tones: "+v.error)
+    
     # Done!
     print("Finished measuring levels.")
 
