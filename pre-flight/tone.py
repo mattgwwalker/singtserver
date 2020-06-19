@@ -115,6 +115,7 @@ class Tone:
 
         # Extract number of samples in outdata
         samples = outdata.shape[0]
+        print("samples:",samples)
 
         if self._pos+samples <= len(self._pcm):
             # Copy tone in one hit
@@ -151,6 +152,9 @@ class Tone:
         # Extract number of samples in outdata
         samples = outdata.shape[0]
 
+        if self._state == Tone.State.INACTIVE:
+            outdata.fill(0)
+        
         if self._state == Tone.State.PLAYING:
             self._fill(outdata, op)
 
@@ -206,14 +210,16 @@ class Tone:
                 # We can stop in the current frame.
                 # Fill up to the stop point and then fill with zeros
                 print("Stopping this frame!")
-                self._fill(outdata[:samples_remaining], op)
+                view = outdata[:samples_remaining]
+                self._fill(view, op)
                 outdata[samples_remaining:] = numpy.zeros(
                     (samples - samples_remaining,channels),
                     numpy.float32
                 )
                 self._state = Tone.State.INACTIVE
+                self.reset()
                 
-            self._fill(outdata, op)
+            #self._fill(outdata, op)
 
         
 
@@ -266,6 +272,7 @@ if __name__ == "__main__":
         FADEIN2 = 40
         STOP = 50
         STOPPING = 55
+        COMPLETED = 60
         
     class Variables:
         def __init__(self):
@@ -313,7 +320,10 @@ if __name__ == "__main__":
             
         elif v.process_state == ProcessState.STOPPING:
             if v.tone.inactive:
-                raise sd.CallbackStop
+                v.process_state = ProcessState.COMPLETED
+
+        elif v.process_state == ProcessState.STOPPING:
+            pass
 
         # Actions
         # =======
@@ -331,23 +341,26 @@ if __name__ == "__main__":
             v.tone.output(outdata)
             
         elif v.process_state == ProcessState.PLAY:
-            print("play")
+            print("Play")
             v.tone.play()
             v.tone.output(outdata)
             
         elif v.process_state == ProcessState.PLAYING:
-            print("playing")
+            print("Playing")
             v.tone.output(outdata)
 
         elif v.process_state == ProcessState.STOP:
-            print("stop")
+            print("Stop")
             v.tone.stop()
             v.tone.output(outdata)
 
         elif v.process_state == ProcessState.STOPPING:
-            print("stopping")
+            print("Stopping")
             v.tone.output(outdata)
 
+        elif v.process_state == ProcessState.COMPLETED:
+            outdata.fill(0)
+            raise sd.CallbackStop
             
         # Store output
         # ============
