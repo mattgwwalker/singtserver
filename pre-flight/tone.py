@@ -71,13 +71,11 @@ class Tone:
     def play(self):
         if self._state == Tone.State.INACTIVE:
             self._state = Tone.State.PLAYING
-            return True
-        else:
-            return False
 
         
     def stop(self):
-        self._state = Tone.State.STOPPING
+        if self._state != Tone.State.INACTIVE:
+            self._state = Tone.State.STOPPING
 
 
     def _create_fade(self, from_, to_, duration):
@@ -95,7 +93,7 @@ class Tone:
         
         
     def fadeout(self, duration):
-        self._state = State.FADING_OUT
+        self._state = Tone.State.FADING_OUT
         self._fadeout_duration = duration
         self._create_fade(1, 0, duration)
         self._fade_pos=0
@@ -159,9 +157,9 @@ class Tone:
         if self._state == Tone.State.PLAYING:
             self._fill(outdata, op)
 
-        elif self._state == Tone.State.FADING_IN:
-            print("fading in")
-            start_time = time.time()
+        elif self._state == Tone.State.FADING_IN or\
+             self._state == Tone.State.FADING_OUT:
+            print("fading")
             
             # Get the length of the active section of the fade
             fade_length = len(self._fade) - self._fade_pos
@@ -180,7 +178,6 @@ class Tone:
                 fade = self._fade[self._fade_pos:self._fade_pos+fade_length]
             else:
                 raise Exception("Unsupported number of output channels")
-            print("adjusted for two channels duration:", round((time.time() - start_time)*1000))
 
             # Apply the fade
             self._fill(fade, op=operator.imul)
@@ -191,16 +188,23 @@ class Tone:
             # Update the position in the fade
             self._fade_pos += fade_length
 
-            # If we've come to the end of the fade, move to "playing".
+            # If we've come to the end of the fade, move to either to
+            # "playing" or "inactive", but fill the rest of the buffer.
             if self._fade_pos == len(self._fade):
-                self._state = Tone.State.PLAYING
-
-                # If we haven't entirely filled the buffer with the
-                # fade then fill the rest of the buffer now.
                 view = outdata[fade_length:]
-                self._fill(view)
+                if self._state == Tone.State.FADING_IN:
+                    self._state = Tone.State.PLAYING
 
-            print("fadein duration:", round((time.time() - start_time)*1000))
+                    # If we haven't entirely filled the buffer with the
+                    # fade then fill the rest of the buffer now.
+                    self._fill(view)
+                else:
+                    self._state = Tone.State.INACTIVE
+
+                    # If we haven't entirely filled the buffer with the
+                    # fade then fill the rest of the buffer now.
+                    view.fill(0)
+                    
 
                 
         if self._state == Tone.State.STOPPING:
@@ -285,7 +289,7 @@ if __name__ == "__main__":
         PLAY = 20
         PLAYING = 25
         FADEOUT = 30
-        FADEIN2 = 40
+        FADING_OUT = 40
         STOP = 50
         STOPPING = 55
         COMPLETED = 60
@@ -332,16 +336,17 @@ if __name__ == "__main__":
         elif v.process_state == ProcessState.PLAYING:
             duration = time.outputBufferDacTime - v.state_started
             if duration >= 2:
-                v.process_state = ProcessState.STOP
+                v.process_state = ProcessState.FADEOUT
 
-        elif v.process_state == ProcessState.STOP:
-            v.process_state = ProcessState.STOPPING
+        elif v.process_state == ProcessState.FADEOUT:
+            v.process_state = ProcessState.FADING_OUT
             
-        elif v.process_state == ProcessState.STOPPING:
+        elif v.process_state == ProcessState.FADING_OUT:
             if v.tone.inactive:
-                v.process_state = ProcessState.COMPLETED
-
-        elif v.process_state == ProcessState.STOPPING:
+                #exception = sd.CallbackStop
+                v.process_state = ProcessState.STOP
+                
+        elif v.process_state == ProcessState.STOP:
             pass
 
         # Actions
@@ -353,7 +358,7 @@ if __name__ == "__main__":
 
         elif v.process_state == ProcessState.FADEIN:
             print("Fade-in")
-            fadein_duration = 0.005 # seconds
+            fadein_duration = 0.5 # seconds
             v.tone.fadein(fadein_duration)
             v.tone.output(outdata)
             
@@ -366,19 +371,23 @@ if __name__ == "__main__":
             print("Playing")
             v.tone.output(outdata)
 
+        elif v.process_state == ProcessState.FADEOUT:
+            print("Fade-out")
+            fadeout_duration = 0.5 # seconds
+            v.tone.fadeout(fadeout_duration)
+            v.tone.output(outdata)
+            
+        elif v.process_state == ProcessState.FADING_OUT:
+            print("Fading out")
+            v.tone.output(outdata)
+            
         elif v.process_state == ProcessState.STOP:
             print("Stop")
             v.tone.stop()
             v.tone.output(outdata)
+            assert v.tone.inactive
             exception = sd.CallbackStop
 
-        elif v.process_state == ProcessState.STOPPING:
-            print("Stopping")
-            v.tone.output(outdata)
-
-        elif v.process_state == ProcessState.COMPLETED:
-            outdata.fill(0)
-            raise sd.CallbackStop
             
         # Store output
         # ============
