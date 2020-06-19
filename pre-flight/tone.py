@@ -2,6 +2,7 @@ import math
 import numpy
 import operator
 from enum import Enum
+import time # For debugging
 
 # TODO: Tone would be better re-written so that it accepted commands
 # (play, stop, fade-out-over-x-seconds) and stored those commands in
@@ -82,7 +83,7 @@ class Tone:
     def _create_fade(self, from_, to_, duration):
         # Produce a linear fadeout multiplier
         samples = int(self._samples_per_second * duration)
-        self.fade = numpy.linspace(from_, to_, samples)
+        self._fade = numpy.linspace(from_, to_, samples)
         
         
     def fadein(self, duration):
@@ -159,32 +160,47 @@ class Tone:
             self._fill(outdata, op)
 
         elif self._state == Tone.State.FADING_IN:
-            # Adjust multiplier if two channels are needed
-            channels = outdata.shape[1]
-            if channels == 2:
-                fade = numpy.array([[x,x] for x in self.fade])
-            elif channels == 1:
-                fade = self.fade
-            else:
-                raise Exception("Unsupported number of output channels")
-
-            # Get the active section of the fade
-            fade_length = len(fade) - self._fade_pos
+            print("fading in")
+            start_time = time.time()
+            
+            # Get the length of the active section of the fade
+            fade_length = len(self._fade) - self._fade_pos
             if fade_length > samples:
                 # We can only output a portion of the fade during this
                 # call.
                 fade_length = samples
 
-            # Apply the fade
-            temp = fade[self._fade_pos:self._fade_pos+fade_length]
-            self._fill(fade_length, temp, op=operator.imul)
+            # Adjust multiplier if two channels are needed and extract
+            # the active section
+            channels = outdata.shape[1]
+            if channels == 2:
+                fade = numpy.array([[x,x] for x in self._fade[
+                    self._fade_pos:self._fade_pos+fade_length]])
+            elif channels == 1:
+                fade = self._fade[self._fade_pos:self._fade_pos+fade_length]
+            else:
+                raise Exception("Unsupported number of output channels")
+            print("adjusted for two channels duration:", round((time.time() - start_time)*1000))
 
+            # Apply the fade
+            self._fill(fade, op=operator.imul)
+
+            # Copy the data to outdata
+            outdata[:fade_length] = fade[:]
+            
             # Update the position in the fade
             self._fade_pos += fade_length
 
             # If we've come to the end of the fade, move to "playing".
-            if self._fade_pos == len(fade):
-                self.state = State.PLAYING
+            if self._fade_pos == len(self._fade):
+                self._state = Tone.State.PLAYING
+
+                # If we haven't entirely filled the buffer with the
+                # fade then fill the rest of the buffer now.
+                view = outdata[fade_length:]
+                self._fill(view)
+
+            print("fadein duration:", round((time.time() - start_time)*1000))
 
                 
         if self._state == Tone.State.STOPPING:
@@ -297,22 +313,25 @@ if __name__ == "__main__":
         if status:
             print(status)
 
+        # Store any exceptions to be raised
+        exception = None
+
         # Transitions
         # ===========
 
         if v.process_state == ProcessState.RESET:
-            v.process_state = ProcessState.PLAY
+            v.process_state = ProcessState.FADEIN
 
         elif v.process_state == ProcessState.FADEIN:
-            pass
+            v.process_state = ProcessState.PLAY
 
         elif v.process_state == ProcessState.PLAY: 
             v.process_state = ProcessState.PLAYING
-            v.state_started = time.currentTime
+            v.state_started = time.outputBufferDacTime
 
         elif v.process_state == ProcessState.PLAYING:
-            duration = time.currentTime - v.state_started
-            if duration > 2:
+            duration = time.outputBufferDacTime - v.state_started
+            if duration >= 2:
                 v.process_state = ProcessState.STOP
 
         elif v.process_state == ProcessState.STOP:
@@ -333,16 +352,14 @@ if __name__ == "__main__":
             outdata.fill(0)
 
         elif v.process_state == ProcessState.FADEIN:
-            # Actively fill the output buffer to avoid artefacts.
-            outdata.fill(0)
-
-            fadein_duration = 0.1 # seconds
+            print("Fade-in")
+            fadein_duration = 0.005 # seconds
             v.tone.fadein(fadein_duration)
             v.tone.output(outdata)
             
         elif v.process_state == ProcessState.PLAY:
             print("Play")
-            v.tone.play()
+            #v.tone.play()
             v.tone.output(outdata)
             
         elif v.process_state == ProcessState.PLAYING:
@@ -353,6 +370,7 @@ if __name__ == "__main__":
             print("Stop")
             v.tone.stop()
             v.tone.output(outdata)
+            exception = sd.CallbackStop
 
         elif v.process_state == ProcessState.STOPPING:
             print("Stopping")
@@ -366,6 +384,12 @@ if __name__ == "__main__":
         # ============
         q.put(outdata.copy())
 
+        # Terminate if required
+        # =====================
+        if exception is not None:
+            raise exception
+            
+        
             
     # Open an output stream
     stream = sd.OutputStream(
