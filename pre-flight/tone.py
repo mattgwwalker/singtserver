@@ -114,7 +114,6 @@ class Tone:
 
         # Extract number of samples in outdata
         samples = outdata.shape[0]
-        print("samples:",samples)
 
         if self._pos+samples <= len(self._pcm):
             # Copy tone in one hit
@@ -159,8 +158,6 @@ class Tone:
 
         elif self._state == Tone.State.FADING_IN or\
              self._state == Tone.State.FADING_OUT:
-            print("fading")
-            
             # Get the length of the active section of the fade
             fade_length = len(self._fade) - self._fade_pos
             if fade_length > samples:
@@ -213,15 +210,11 @@ class Tone:
             samples_per_wavelength = int(
                 self._samples_per_second * duration_wavelength
             )
-            print("samples_per_wavelength:",samples_per_wavelength)
             end_wavelength = (
                 math.ceil(self._pos / samples_per_wavelength)
                 * samples_per_wavelength
             )
-            print("end_wavelength:", end_wavelength)
-            print("pos:", self._pos)
             samples_remaining = end_wavelength - self._pos
-            print("samples_remaining:", samples_remaining)
             if samples_remaining > samples:
                 # We can't stop in the current frame, so just fill as
                 # normal
@@ -229,7 +222,6 @@ class Tone:
             else:
                 # We can stop in the current frame.
                 # Fill up to the stop point and then fill with zeros
-                print("Stopping this frame!")
                 view = outdata[:samples_remaining]
                 self._fill(view, op)
                 outdata[samples_remaining:] = numpy.zeros(
@@ -327,7 +319,8 @@ if __name__ == "__main__":
             v.process_state = ProcessState.FADEIN
 
         elif v.process_state == ProcessState.FADEIN:
-            v.process_state = ProcessState.PLAY
+            v.process_state = ProcessState.PLAYING
+            v.state_started = time.outputBufferDacTime
 
         elif v.process_state == ProcessState.PLAY: 
             v.process_state = ProcessState.PLAYING
@@ -364,11 +357,11 @@ if __name__ == "__main__":
             
         elif v.process_state == ProcessState.PLAY:
             print("Play")
-            #v.tone.play()
+            v.tone.play()
             v.tone.output(outdata)
             
         elif v.process_state == ProcessState.PLAYING:
-            print("Playing")
+            #print("Playing")
             v.tone.output(outdata)
 
         elif v.process_state == ProcessState.FADEOUT:
@@ -378,7 +371,7 @@ if __name__ == "__main__":
             v.tone.output(outdata)
             
         elif v.process_state == ProcessState.FADING_OUT:
-            print("Fading out")
+            #print("Fading out")
             v.tone.output(outdata)
             
         elif v.process_state == ProcessState.STOP:
