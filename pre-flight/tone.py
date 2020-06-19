@@ -52,7 +52,7 @@ class Tone:
         else:
             self._pcm = pcm
 
-        # Noramlise
+        # Normalise
         self._pcm *= max_level
 
         self._pos = 0
@@ -100,9 +100,16 @@ class Tone:
 
         
     def click(self, duration):
-        self._state = State.CLICKING
-        self._click_duration = duration
+        if self._state == Tone.State.INACTIVE:
+            self._state = Tone.State.CLICKING
 
+            # Produce a fade profile
+            samples = int(self._samples_per_second * duration)
+            fade_in = numpy.linspace(0, 1, samples//2)
+            fade_out = numpy.linspace(1, 0, samples//2)
+            self._fade = numpy.concatenate((fade_in, fade_out))
+            self._fade_pos = 0
+        
 
     def _fill(self, outdata, op=None):
         """Op needs to be an in-place operator (see
@@ -156,8 +163,9 @@ class Tone:
         if self._state == Tone.State.PLAYING:
             self._fill(outdata, op)
 
-        elif self._state == Tone.State.FADING_IN or\
-             self._state == Tone.State.FADING_OUT:
+        elif self._state == Tone.State.FADING_IN or \
+             self._state == Tone.State.FADING_OUT or \
+             self._state == Tone.State.CLICKING:
             # Get the length of the active section of the fade
             fade_length = len(self._fade) - self._fade_pos
             if fade_length > samples:
@@ -283,8 +291,7 @@ if __name__ == "__main__":
         FADEOUT = 30
         FADING_OUT = 40
         STOP = 50
-        STOPPING = 55
-        COMPLETED = 60
+        CLICK = 60
         
     class Variables:
         def __init__(self):
@@ -336,9 +343,11 @@ if __name__ == "__main__":
             
         elif v.process_state == ProcessState.FADING_OUT:
             if v.tone.inactive:
-                #exception = sd.CallbackStop
-                v.process_state = ProcessState.STOP
+                v.process_state = ProcessState.CLICK
                 
+        elif v.process_state == ProcessState.CLICK:
+            v.process_state = ProcessState.STOP
+            
         elif v.process_state == ProcessState.STOP:
             pass
 
@@ -374,12 +383,21 @@ if __name__ == "__main__":
             #print("Fading out")
             v.tone.output(outdata)
             
+        elif v.process_state == ProcessState.CLICK:
+            print("Click")
+            click_duration = 10/1000 # seconds
+            v.tone.click(click_duration)
+            v.tone.output(outdata)
+            assert v.tone.inactive
+            
         elif v.process_state == ProcessState.STOP:
             print("Stop")
             v.tone.stop()
             v.tone.output(outdata)
             assert v.tone.inactive
             exception = sd.CallbackStop
+
+            
 
             
         # Store output
