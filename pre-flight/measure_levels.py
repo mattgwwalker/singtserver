@@ -49,12 +49,20 @@ class FFTAnalyser:
         # If we have more than the required number of samples
         # recorded, execute FFT analysis
         if rec_position > self._n:
-            left = rec_pcm[rec_position-self._n:rec_position, 0]
-            right = rec_pcm[rec_position-self._n:rec_position, 1]
-            #data_transpose = data.transpose()
-            #left = data_transpose[0]
-            #right = data_transpose[1]
-            mono = (left+right) / 2
+            # If we've got stereo data, average together the two
+            # channels
+            channels = rec_pcm.shape[1]
+            if channels == 2:
+                left = rec_pcm[rec_position-self._n:rec_position, 0]
+                right = rec_pcm[rec_position-self._n:rec_position, 1]
+                mono = (left+right) / 2
+            elif channels == 1:
+                mono = rec_pcm[rec_position-self._n:rec_position, 0]
+            else:
+                raise Exception(
+                    "Attempted to analyse data with an unsupported "+
+                    "number of channels ({:d})".format(channels)
+                )
 
             y = numpy.fft.rfft(
                 # Use of Hann window to reduce spectral leakage (see
@@ -66,8 +74,19 @@ class FFTAnalyser:
             y = numpy.abs(y)
 
             return y[self._freq_indices]
+        
+        else:
+            # We don't have enough samples to analyse
+            return None
     
 
+# TODO: Tone would be better re-written so that it accepted commands
+# (play, stop, fade-out-over-x-seconds) and stored those commands in
+# internal state.  It would have another method, say, execute() which
+# copied the appropriate data into the outdata.  The advantage of this
+# approach would be fade-outs over periods longer than the frame size,
+# and stopping that finished on a zero-crossing, which would stop
+# clicks.
 
 class Tone:
     def __init__(self, freq, duration=1.0, samples_per_second=48000, channels=2, max_level=1):
@@ -133,6 +152,20 @@ class Tone:
 
             self._pos = samples-remaining
 
+            
+    def stop(self, samples, outdata, op=None):
+        # TODO: To implement this method, the class needs to be
+        # re-written to have the state of a current command.  This is
+        # because "stop" might take far more than one frame to find
+        # the next zero crossing.
+        
+        # Calculate the number of samples to the next
+        # end-of-wavelength (a zero-crossing)
+
+        # Play
+        pass
+        
+
 
     def _fade(self, samples, outdata, op, from_, to_):
         # Produce a linear fadeout multiplier
@@ -178,10 +211,25 @@ class Tone:
 # tone #1 and wait until we detect not-not-tone#1.  Finally, measure
 # levels of tone #0 and tone #1.
 
-def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,2)):
-    """Channels are specified as a tuple of (input channels, output channels)."""
-    input_channels, output_channels = channels
+def measure_levels(desired_latency="low", samples_per_second=48000):
+    # Get number of channels from input and output devices
+    device_strings = sd.query_devices()
+    default_input_index = sd.default.device[0]
+    default_output_index = sd.default.device[1]
 
+    input_device_string = device_strings[default_input_index]["name"]
+    print("Selected input device:", input_device_string)
+    input_channels = device_strings[default_input_index]["max_input_channels"]
+    print("Number of input channels:", input_channels)
+
+    output_device_string = device_strings[default_output_index]["name"]
+    print("Selected output device:", output_device_string)
+    output_channels = device_strings[default_output_index]["max_output_channels"]
+    print("Number of output channels:", output_channels)
+
+    channels = (input_channels, output_channels)
+
+    
     # Class to describe the current state of the process
     class ProcessState(Enum):
         RESET = 0
@@ -191,6 +239,9 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
         MEASURE_TONE0 = 40
         DETECT_TONE1 = 50
         MEASURE_TONE0_TONE1 = 60
+        FADEOUT_TONE0_TONE1 = 61
+        DETECT_SILENCE = 63
+        MEASURE_SILENCE2 = 67
         COMPLETING = 70
         COMPLETED = 80
         ABORTED = 90
@@ -286,14 +337,30 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
             self.tone0_tone1_mean = None
             self.tone0_tone1_sd = None
 
-            # To overcome what seems to be a bug in either sounddevice
-            # or portaudio, we need to write a complete frame of zeros
-            # in order to avoid a click when the stream closes.  See
-            # https://github.com/spatialaudio/python-sounddevice/issues/249
-            self.zero_frames_count = 0
+            # Variables for detect silence
+            self.detect_silence_detected = False
+            self.detect_silence_threshold_num_sd = 4 # std. deviations from tone0_tone1
+            self.detect_silence_start_time = None
+            self.detect_silence_threshold_duration = 0.2 # seconds
+            self.detect_silence_max_time_in_state = 5 # seconds
 
+            # Variables for measure silence 2
+            self.measure_silence2_max_recording_duration = 0.5 #seconds
+            max_recording_samples = int(
+                self.measure_silence2_max_recording_duration
+                * samples_per_second
+            )
+            self.measure_silence2_pcm = numpy.zeros((
+                max_recording_samples,
+                input_channels
+            ))
+            self.measure_silence2_pcm_pos = 0
+            self.measure_silence2_start_time = None
+            self.silence2_mean = None
+            self.silence2_sd = None
             # Variable to store error during audio processing
             self.error = None
+
             
     # Create an instance of the shared variables
     v = SharedVariables(samples_per_second)
@@ -302,282 +369,362 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
     # buffer depends on the latency requested.
     def callback(indata, outdata, samples, time, status):
         nonlocal v
-        # Store Recording
-        # ===============
-        
-        v.rec_pcm[v.rec_position:v.rec_position+samples] = indata[:]
-        v.rec_position += samples
 
-        
-        # Analysis
-        # ========
+        try:
+            # Store Recording
+            # ===============
 
-        tones_level = v.fft_analyser.run(v.rec_pcm, v.rec_position)
-        #print(tones_level)
-        
+            v.rec_pcm[v.rec_position:v.rec_position+samples] = indata[:]
+            v.rec_position += samples
 
-        # Clear the first half second of the recording buffer if we've
-        # recorded more than one second
-        if v.rec_position > v.samples_per_second:
-            seconds_to_clear = 0.5 # seconds
-            samples_to_clear = int(seconds_to_clear * v.samples_per_second)
-            v.rec_pcm = numpy.roll(v.rec_pcm, -samples_to_clear, axis=0)
-            v.rec_position -= samples_to_clear
 
-        
-        # Transitions
-        # ===========
+            # Analysis
+            # ========
 
-        previous_state = v.process_state
+            tones_level = v.fft_analyser.run(v.rec_pcm, v.rec_position)
+            #print(tones_level)
 
-        if v.process_state == ProcessState.RESET:
-            v.process_state = ProcessState.MEASURE_SILENCE
-                        
-        elif v.process_state == ProcessState.MEASURE_SILENCE:
-            if v.silence_mean is not None and \
-               v.silence_sd is not None:
-                if any(v.silence_mean < v.silence_mean_threshold):
-                    v.error = "Implausibly low mean level detected for silence; aborting."
+
+            # Clear the first half second of the recording buffer if we've
+            # recorded more than one second
+            if v.rec_position > v.samples_per_second:
+                seconds_to_clear = 0.5 # seconds
+                samples_to_clear = int(seconds_to_clear * v.samples_per_second)
+                v.rec_pcm = numpy.roll(v.rec_pcm, -samples_to_clear, axis=0)
+                v.rec_position -= samples_to_clear
+
+
+            # Transitions
+            # ===========
+
+            previous_state = v.process_state
+
+            if v.process_state == ProcessState.RESET:
+                v.process_state = ProcessState.MEASURE_SILENCE
+
+            elif v.process_state == ProcessState.MEASURE_SILENCE:
+                if v.silence_mean is not None and \
+                   v.silence_sd is not None:
+                    if any(v.silence_mean < v.silence_mean_threshold):
+                        v.error = "Implausibly low mean level detected for silence; aborting."
+                        v.process_state = ProcessState.ABORTED
+                    elif any(v.silence_sd < v.silence_sd_threshold):
+                        v.error = "Implausibly low standard deviation detected for silence; aborting."
+                        v.process_state = ProcessState.ABORTED
+                    else:
+                        # No reason not to continue
+                        v.process_state = ProcessState.FADEIN_TONE0
+                        v.non_silence_abort_start_time = time.currentTime
+                        print("About to play tone.  Please increase system volume until the tone is detected.")
+
+                if time.currentTime - v.state_start_time > v.silence_max_time_in_state:
+                    v.error = "Spent too long listening to silence."
                     v.process_state = ProcessState.ABORTED
-                elif any(v.silence_sd < v.silence_sd_threshold):
-                    v.error = "Implausibly low standard deviation detected for silence; aborting."
+
+
+            elif v.process_state == ProcessState.FADEIN_TONE0:
+                v.process_state = ProcessState.DETECT_TONE0
+
+
+            elif v.process_state == ProcessState.DETECT_TONE0:
+                if v.non_silence_detected:
+                    v.process_state = ProcessState.MEASURE_TONE0
+                    print("Base tone detected.  Please do not adjust system volume nor position")
+                    print("of microphone or speakers")
+
+                if time.currentTime - v.state_start_time > v.non_silence_max_time_in_state:
+                    v.error = "Spent too long listening for non-silence."
                     v.process_state = ProcessState.ABORTED
+
+
+            elif v.process_state == ProcessState.MEASURE_TONE0:
+                if v.tone0_mean is not None and \
+                   v.tone0_sd is not None:
+                    v.process_state = ProcessState.DETECT_TONE1
+
+
+            elif v.process_state == ProcessState.DETECT_TONE1:
+                if v.detect_tone1_detected:
+                    v.process_state = ProcessState.MEASURE_TONE0_TONE1
+
+                if time.currentTime - v.state_start_time > v.detect_tone1_max_time_in_state:
+                    v.error = "Spent too long listening for tone #1."
+                    v.process_state = ProcessState.ABORTED
+
+
+            elif v.process_state == ProcessState.MEASURE_TONE0_TONE1:
+                if v.tone0_tone1_mean is not None and \
+                   v.tone0_tone1_sd is not None:
+                    v.process_state = ProcessState.FADEOUT_TONE0_TONE1
+
+
+            elif v.process_state == ProcessState.FADEOUT_TONE0_TONE1:
+                v.process_state = ProcessState.DETECT_SILENCE
+
+
+            elif v.process_state == ProcessState.DETECT_SILENCE:
+                if v.detect_silence_detected:
+                    v.process_state = ProcessState.MEASURE_SILENCE2
+
+                if time.currentTime - v.state_start_time > v.detect_silence_max_time_in_state:
+                    v.error = "Spent too long listening for silence (the second time)."
+                    v.process_state = ProcessState.ABORTED
+
+            elif v.process_state == ProcessState.MEASURE_SILENCE2:
+                if v.silence2_mean is not None and \
+                   v.silence2_sd is not None:
+                    v.process_state = ProcessState.COMPLETED
+
+            elif v.process_state == ProcessState.COMPLETING:
+                v.process_state = ProcessState.COMPLETED
+
+
+            elif v.process_state == ProcessState.COMPLETED:
+                pass
+
+
+            # Set state start time
+            if previous_state != v.process_state:
+                v.state_start_time = time.currentTime
+
+
+            # States
+            # ======
+
+            if v.process_state == ProcessState.RESET:
+                # It's a requirement that outdata is always actively
+                # filled
+                outdata.fill(0)
+
+            elif v.process_state == ProcessState.MEASURE_SILENCE:
+                # It's a requirement that outdata is always actively
+                # filled
+                outdata.fill(0)
+
+                # Check if the sample is acceptable:
+                if tones_level is not None and all(tones_level > 0):
+                    # Levels are acceptable
+
+                    # If we haven't started timing, do so now
+                    if v.silence_start_time is None:
+                        v.silence_start_time = time.inputBufferAdcTime
+
+                    # Check if we've listened to enough silence
+                    duration = time.currentTime - v.silence_start_time
+                    if duration <= v.silence_threshold_duration:
+                        # Record this level
+                        v.silence_levels.append(tones_level)
+                    elif len(v.silence_levels) < v.min_num_samples:
+                        print("Insufficient samples of silence observed; listening for another half-second")
+                        v.silence_threshold_duration += 0.5 # seconds
+                    else:
+                        # We've now collected enough sample levels;
+                        # calculate the mean and standard deviation of the
+                        # samples taken.
+                        v.silence_mean = numpy.mean(v.silence_levels, axis=0)
+                        v.silence_sd = numpy.std(v.silence_levels, axis=0)
+                        print("silence_mean:",v.silence_mean)
+                        print("silence_sd:", v.silence_sd)
+                        print("sample size of silence:", len(v.silence_levels))
+
+
+            elif v.process_state == ProcessState.FADEIN_TONE0:
+                print("Fading in tone #0")
+                v.tones[0].fadein(samples, outdata)
+
+
+            elif v.process_state == ProcessState.DETECT_TONE0:
+                # Play tone #0
+                v.tones[0].play(samples, outdata)
+
+                # Calculate the number of standard deviations from silence
+                num_sd = (tones_level[0] - v.silence_mean[0]) / v.silence_sd[0]
+
+                if abs(num_sd) > v.non_silence_threshold_num_sd:
+                    if v.non_silence_start_time is None:
+                        v.non_silence_start_time = time.currentTime
+                    else:
+                        duration = time.currentTime - v.non_silence_start_time
+                        if duration > v.non_silence_threshold_duration:
+                            print("Non-silence detected")
+                            v.non_silence_detected = True
                 else:
-                    # No reason not to continue
-                    v.process_state = ProcessState.FADEIN_TONE0
-                    v.non_silence_abort_start_time = time.currentTime
-                    print("About to play tone.  Please increase system volume until the tone is detected.")
+                    # Reset timer
+                    v.non_silence_start_time = None
+
+
+            elif v.process_state == ProcessState.MEASURE_TONE0:
+                # Play tone #0
+                v.tones[0].play(samples, outdata)
+
+                # Start the timer if not started
+                if v.tone0_start_time is None:
+                    v.tone0_start_time = time.currentTime
+
+                # TODO: Should we check that we've got non-silence?
+
+                # Save the levels because we assume we're hearing tone #0
+                v.tone0_levels.append(tones_level)
+
+                duration = time.currentTime - v.tone0_start_time
+                if duration > v.tone0_threshold_duration:
+                    if len(v.tone0_levels) >= v.min_num_samples:
+                        # We've now collected enough samples
+                        v.tone0_mean = numpy.mean(v.tone0_levels, axis=0)
+                        v.tone0_sd = numpy.std(v.tone0_levels, axis=0)
+                        print("tone0_mean:",v.tone0_mean)
+                        print("tone0_sd:", v.tone0_sd)
+                        print("tone0 number of samples:", len(v.tone0_levels))
+                    else:
+                        print("We haven't collected sufficient samples; increasing sampling time by half a second")
+                        v.tone0_threshold_duration += 0.5
+
+
+            elif v.process_state == ProcessState.DETECT_TONE1:
+                # Play tones
+                v.tones[0].play(samples, outdata)
+                v.tones[1].play(samples, outdata, op=operator.iadd)
+
+                # Calculate the number of standard deviations from not-tone1
+                num_sd = (tones_level[1] - v.tone0_mean[1]) / v.tone0_sd[1]
+
+                if abs(num_sd) > v.detect_tone1_threshold_num_sd:
+                    if v.detect_tone1_start_time is None:
+                        v.detect_tone1_start_time = time.currentTime
+                    else:
+                        duration = time.currentTime - v.detect_tone1_start_time
+                        if duration > v.detect_tone1_threshold_duration:
+                            print("Tone #1 detected")
+                            v.detect_tone1_detected = True
+                else:
+                    # Reset timer
+                    v.non_silence_start_time = None
+
+
+            elif v.process_state == ProcessState.MEASURE_TONE0_TONE1:
+                # Play tones
+                v.tones[0].play(samples, outdata)
+                v.tones[1].play(samples, outdata, op=operator.iadd)
+
+                # Start the timer if not started
+                if v.tone0_tone1_start_time is None:
+                    v.tone0_tone1_start_time = time.currentTime
+
+                # TODO: Should we check that we've got not-not-tone1?
+
+                # Save the levels because we assume we're hearing tone #1
+                v.tone0_tone1_levels.append(tones_level)
+
+                duration = time.currentTime - v.tone0_tone1_start_time
+                if duration > v.tone0_tone1_threshold_duration:
+                    if len(v.tone0_tone1_levels) >= v.min_num_samples:
+                        # We've now collected enough samples
+                        v.tone0_tone1_mean = numpy.mean(v.tone0_tone1_levels, axis=0)
+                        v.tone0_tone1_sd = numpy.std(v.tone0_tone1_levels, axis=0)
+                        print("tone0_tone1_mean:",v.tone0_tone1_mean)
+                        print("tone0_tone1_sd:", v.tone0_tone1_sd)
+                        print("tone0_tone1 number of samples:", len(v.tone0_tone1_levels))
+                    else:
+                        print("We haven't collected sufficient samples; increasing sampling time by half a second")
+                        v.tone0_tone1_threshold_duration += 0.5
+
+
+            elif v.process_state == ProcessState.FADEOUT_TONE0_TONE1:
+                print("Fading out tone #0")
+                v.tones[0].fadeout(samples, outdata)
+                print("Fading out tone #1")
+                v.tones[1].fadeout(samples, outdata, op=operator.iadd)                
+
+
+            elif v.process_state == ProcessState.DETECT_SILENCE:
+                # Actively fill the output buffer
+                outdata.fill(0)
+
+                # Calculate the number of standard deviations from not-tone0-tone1
+                num_sd = (tones_level - v.tone0_tone1_mean) / v.tone0_tone1_sd
+
+                if all(abs(num_sd) > v.detect_silence_threshold_num_sd):
+                    if v.detect_silence_start_time is None:
+                        v.detect_silence_start_time = time.currentTime #FIXME: is that the right time?
+                    else:
+                        duration = time.currentTime - v.detect_silence_start_time # FIXME: Is that the right time?
+                        if duration > v.detect_silence_threshold_duration:
+                            print("Silence detected")
+                            v.detect_silence_detected = True
+                else:
+                    # Reset timer
+                    v.detect_silence_start_time = None
+
                     
-            if time.currentTime - v.state_start_time > v.silence_max_time_in_state:
-                v.error = "Spent too long listening to silence."
-                v.process_state = ProcessState.ABORTED
+            elif v.process_state == ProcessState.MEASURE_SILENCE2:
+                # Actively fill the output buffer
+                outdata.fill(0)
+                
+                #print("Measuring silence #2")
+                # Start the timer if not started
+                if v.measure_silence2_start_time is None:
+                    v.measure_silence2_start_time = time.currentTime
+
+                # TODO: Should we check that we've got not-not-tone1?
+
+                # Save the levels because we assume we're hearing silence
+                max_samples = samples
+                if v.measure_silence2_pcm_pos+max_samples > len(v.measure_silence2_pcm):
+                    max_samples = len(v.measure_silence2_pcm) - v.measure_silence2_pcm_pos
+                v.measure_silence2_pcm[
+                    v.measure_silence2_pcm_pos:
+                    v.measure_silence2_pcm_pos+max_samples] = \
+                        indata[:max_samples]
+                v.measure_silence2_pcm_pos += max_samples
+
+                # Check if we've filled the buffer
+                if v.measure_silence2_pcm_pos >= len(v.measure_silence2_pcm):
+                    # Calculate the mean and std dev
+                    v.silence2_mean = numpy.mean(
+                        abs(v.measure_silence2_pcm)
+                    )
+                    v.silence2_sd = numpy.std(
+                        v.measure_silence2_pcm
+                    )
+                    print("silence2_mean:", v.silence2_mean)
+                    print("silence2_sd:", v.silence2_sd)
+                    print("number of samples:", len(v.measure_silence2_pcm))
 
                 
-        elif v.process_state == ProcessState.FADEIN_TONE0:
-            v.process_state = ProcessState.DETECT_TONE0
-
-            
-        elif v.process_state == ProcessState.DETECT_TONE0:
-            if v.non_silence_detected:
-                v.process_state = ProcessState.MEASURE_TONE0
-                print("Base tone detected.  Please do not adjust system volume nor position")
-                print("of microphone or speakers")
-
-            if time.currentTime - v.state_start_time > v.non_silence_max_time_in_state:
-                v.error = "Spent too long listening for non-silence."
-                v.process_state = ProcessState.ABORTED
-
-
-        elif v.process_state == ProcessState.MEASURE_TONE0:
-            if v.tone0_mean is not None and \
-               v.tone0_sd is not None:
-                v.process_state = ProcessState.DETECT_TONE1
-
-                
-        elif v.process_state == ProcessState.DETECT_TONE1:
-            if v.detect_tone1_detected:
-                v.process_state = ProcessState.MEASURE_TONE0_TONE1
-
-            if time.currentTime - v.state_start_time > v.detect_tone1_max_time_in_state:
-                v.error = "Spent too long listening for tone #1."
-                v.process_state = ProcessState.ABORTED
-                
-
-        elif v.process_state == ProcessState.MEASURE_TONE0_TONE1:
-            if v.tone0_tone1_mean is not None and \
-               v.tone0_tone1_sd is not None:
-                v.process_state = ProcessState.COMPLETING
-
-                
-        elif v.process_state == ProcessState.COMPLETING:
-            v.process_state = ProcessState.COMPLETED
-
-            
-        elif v.process_state == ProcessState.COMPLETED:
-            pass
-        
-
-        # Set state start time
-        if previous_state != v.process_state:
-            v.state_start_time = time.currentTime
-        
-        
-        # States
-        # ======
-
-        if v.process_state == ProcessState.RESET:
-            # It's a requirement that outdata is always actively
-            # filled
-            outdata.fill(0)
-            
-        elif v.process_state == ProcessState.MEASURE_SILENCE:
-            # It's a requirement that outdata is always actively
-            # filled
-            outdata.fill(0)
-            
-            # Check if the sample is acceptable:
-            if tones_level is not None and all(tones_level > 0):
-                # Levels are acceptable
-
-                # If we haven't started timing, do so now
-                if v.silence_start_time is None:
-                    v.silence_start_time = time.inputBufferAdcTime
-
-                # Check if we've listened to enough silence
-                duration = time.currentTime - v.silence_start_time
-                if duration <= v.silence_threshold_duration:
-                    # Record this level
-                    v.silence_levels.append(tones_level)
-                elif len(v.silence_levels) < v.min_num_samples:
-                    print("Insufficient samples of silence observed; listening for another half-second")
-                    v.silence_threshold_duration += 0.5 # seconds
-                else:
-                    # We've now collected enough sample levels;
-                    # calculate the mean and standard deviation of the
-                    # samples taken.
-                    v.silence_mean = numpy.mean(v.silence_levels, axis=0)
-                    v.silence_sd = numpy.std(v.silence_levels, axis=0)
-                    print("silence_mean:",v.silence_mean)
-                    print("silence_sd:", v.silence_sd)
-                    print("sample size of silence:", len(v.silence_levels))
-
-                
-        elif v.process_state == ProcessState.FADEIN_TONE0:
-            print("Fading in tone #0")
-            v.tones[0].fadein(samples, outdata)
-            
-            
-        elif v.process_state == ProcessState.DETECT_TONE0:
-            # Play tone #0
-            v.tones[0].play(samples, outdata)
-
-            # Calculate the number of standard deviations from silence
-            num_sd = (tones_level[0] - v.silence_mean[0]) / v.silence_sd[0]
-
-            if abs(num_sd) > v.non_silence_threshold_num_sd:
-                if v.non_silence_start_time is None:
-                    v.non_silence_start_time = time.currentTime
-                else:
-                    duration = time.currentTime - v.non_silence_start_time
-                    if duration > v.non_silence_threshold_duration:
-                        print("Non-silence detected")
-                        v.non_silence_detected = True
-            else:
-                # Reset timer
-                v.non_silence_start_time = None
-
-                
-        elif v.process_state == ProcessState.MEASURE_TONE0:
-            # Play tone #0
-            v.tones[0].play(samples, outdata)
-
-            # Start the timer if not started
-            if v.tone0_start_time is None:
-                v.tone0_start_time = time.currentTime
-
-            # TODO: Should we check that we've got non-silence?
-                
-            # Save the levels because we assume we're hearing tone #0
-            v.tone0_levels.append(tones_level)
-
-            duration = time.currentTime - v.tone0_start_time
-            if duration > v.tone0_threshold_duration:
-                if len(v.tone0_levels) >= v.min_num_samples:
-                    # We've now collected enough samples
-                    v.tone0_mean = numpy.mean(v.tone0_levels, axis=0)
-                    v.tone0_sd = numpy.std(v.tone0_levels, axis=0)
-                    print("tone0_mean:",v.tone0_mean)
-                    print("tone0_sd:", v.tone0_sd)
-                    print("tone0 number of samples:", len(v.tone0_levels))
-                else:
-                    print("We haven't collected sufficient samples; increasing sampling time by half a second")
-                    v.tone0_threshold_duration += 0.5
-
-                        
-        elif v.process_state == ProcessState.DETECT_TONE1:
-            # Play tones
-            v.tones[0].play(samples, outdata)
-            v.tones[1].play(samples, outdata, op=operator.iadd)
-
-            # Calculate the number of standard deviations from not-tone1
-            num_sd = (tones_level[1] - v.tone0_mean[1]) / v.tone0_sd[1]
-
-            if abs(num_sd) > v.detect_tone1_threshold_num_sd:
-                if v.detect_tone1_start_time is None:
-                    v.detect_tone1_start_time = time.currentTime
-                else:
-                    duration = time.currentTime - v.detect_tone1_start_time
-                    if duration > v.detect_tone1_threshold_duration:
-                        print("Tone #1 detected")
-                        v.detect_tone1_detected = True
-            else:
-                # Reset timer
-                v.non_silence_start_time = None
-            
-
-        elif v.process_state == ProcessState.MEASURE_TONE0_TONE1:
-            # Play tones
-            v.tones[0].play(samples, outdata)
-            v.tones[1].play(samples, outdata, op=operator.iadd)
-
-            # Start the timer if not started
-            if v.tone0_tone1_start_time is None:
-                v.tone0_tone1_start_time = time.currentTime
-
-            # TODO: Should we check that we've got not-not-tone1?
-                
-            # Save the levels because we assume we're hearing tone #1
-            v.tone0_tone1_levels.append(tones_level)
-
-            duration = time.currentTime - v.tone0_tone1_start_time
-            if duration > v.tone0_tone1_threshold_duration:
-                if len(v.tone0_tone1_levels) >= v.min_num_samples:
-                    # We've now collected enough samples
-                    v.tone0_tone1_mean = numpy.mean(v.tone0_tone1_levels, axis=0)
-                    v.tone0_tone1_sd = numpy.std(v.tone0_tone1_levels, axis=0)
-                    print("tone0_tone1_mean:",v.tone0_tone1_mean)
-                    print("tone0_tone1_sd:", v.tone0_tone1_sd)
-                    print("tone0_tone1 number of samples:", len(v.tone0_tone1_levels))
-                else:
-                    print("We haven't collected sufficient samples; increasing sampling time by half a second")
-                    v.tone0_tone1_threshold_duration += 0.5
-
-                
-        elif v.process_state == ProcessState.COMPLETING:
-            outdata.fill(0)
-            print("Fading out tone #0")
-            v.tones[0].fadeout(samples, outdata, op=operator.iadd)
-            #print("Fading out tone #1")
-            #v.tones[1].fadeout(samples, outdata, op=operator.iadd)                
-
-            
-        elif v.process_state == ProcessState.COMPLETED:
-            outdata.fill(0)
-            v.zero_frames_count += 1
-            if v.zero_frames_count > 1:
+            elif v.process_state == ProcessState.COMPLETED:
+                # Actively fill the output buffer
+                outdata.fill(0)
                 print("Successfully completed measuring levels")
                 raise sd.CallbackStop
 
-        
-        elif v.process_state == ProcessState.ABORTED:
-            outdata.fill(0)
-            v.zero_frames_count += 1
-            if v.zero_frames_count > 1:
+
+            elif v.process_state == ProcessState.ABORTED:
+                outdata.fill(0)
                 print("Aborting measuring levels: "+v.error)
-                print(sd.query_devices())
-                raise sd.CallbackStop
+                raise sd.CallbackAbort
 
-            
-        # DEBUG
-        # Save outdata for analysis
-        v.out_pcm[v.out_pcm_pos:v.out_pcm_pos+samples] = outdata[:]
-        v.out_pcm_pos += samples
-        if v.out_pcm_pos > len(v.out_pcm):
-            v.error = "Buffer for PCM of output is full"
+
+            # DEBUG
+            # Save outdata for analysis
+            v.out_pcm[v.out_pcm_pos:v.out_pcm_pos+samples] = outdata[:]
+            v.out_pcm_pos += samples
+            if v.out_pcm_pos > len(v.out_pcm):
+                v.error = "Buffer for PCM of output is full"
+                raise sd.CallbackAbort
+
+            if stream.cpu_load > 0.25:
+                print("High CPU usage:", round(stream.cpu_load,3))
+
+        except sd.CallbackAbort:
+            raise
+
+        except sd.CallbackStop:
+            raise
+                
+        except Exception as exception:
+            v.error = "Exception raised within callback: "+str(exception)
+            v.exception = exception
             raise sd.CallbackAbort
-
-        if stream.cpu_load > 0.25:
-            print("High CPU usage:", round(stream.cpu_load,3))
             
 
         
@@ -597,17 +744,27 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
         v.event.wait()  # Wait until measurement is finished
 
     # Save out pcm for analysis
-    wave_file = wave.open("out.wav", "wb")
-    wave_file.setnchannels(channels[1])
-    wave_file.setsampwidth(2)
-    wave_file.setframerate(samples_per_second)
-    data = v.out_pcm[0:v.out_pcm_pos]
-    data = data * 2**15-1
-    data = data.astype(numpy.int16)
-    wave_file.writeframes(data)
-    wave_file.close()
+    if v.out_pcm_pos > 0:
+        wave_file = wave.open("out.wav", "wb")
+        wave_file.setnchannels(output_channels)
+        wave_file.setsampwidth(2)
+        wave_file.setframerate(samples_per_second)
+        data = v.out_pcm[0:v.out_pcm_pos]
+        data = data * 2**15-1
+        data = data.astype(numpy.int16)
+        wave_file.writeframes(data)
+        wave_file.close()
+    else:
+        print("WARNING: No data to write to out.wav")
 
     # Ensure that we have valid results
+    try:
+        raise v.exception
+    except:
+        # If there's an exception raised while attempting to re-raise
+        # an exception, just ignore it.
+        pass
+    
     if v.error is not None:
         raise Exception("Failed to detect levels of the different tones: "+v.error)
     
@@ -618,7 +775,9 @@ def measure_levels(desired_latency="low", samples_per_second=48000, channels=(2,
         "tone0_mean": v.tone0_mean,
         "tone0_sd": v.tone0_sd,
         "tone0_tone1_mean": v.tone0_tone1_mean,
-        "tone0_tone1_sd": v.tone0_tone1_sd
+        "tone0_tone1_sd": v.tone0_tone1_sd,
+        "silence2_mean": v.silence2_mean,
+        "silence2_sd": v.silence2_sd
     }
 
 
