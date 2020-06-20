@@ -36,11 +36,12 @@ class Tone:
         duration_wavelength = 1 / freq
         num_wavlengths = math.ceil(duration / duration_wavelength)
         duration = num_wavlengths * duration_wavelength
+        samples = int(duration * samples_per_second)
         
         t = numpy.linspace(
             0,
             duration,
-            int(duration * samples_per_second),
+            samples,
             False
         )
 
@@ -50,13 +51,14 @@ class Tone:
             two_channels = [[x,x] for x in pcm]
             self._pcm = numpy.array(two_channels, dtype=numpy.float32)
         else:
-            self._pcm = pcm
+            self._pcm = numpy.reshape(pcm, (samples,1))
 
         # Normalise
         self._pcm *= max_level
 
         self._pos = 0
 
+        
     @property
     def inactive(self):
         return self._state == Tone.State.INACTIVE
@@ -85,18 +87,18 @@ class Tone:
         
         
     def fadein(self, duration):
-        self._state = Tone.State.FADING_IN
-        self._fadein_duration = duration
-        self._create_fade(0, 1, duration)
-        self._fade_pos=0
-
+        """Duration in seconds."""
+        if self._state == Tone.State.INACTIVE:
+            self._state = Tone.State.FADING_IN
+            self._create_fade(0, 1, duration)
+            self._fade_pos=0
         
         
     def fadeout(self, duration):
-        self._state = Tone.State.FADING_OUT
-        self._fadeout_duration = duration
-        self._create_fade(1, 0, duration)
-        self._fade_pos=0
+        if self._state == Tone.State.PLAYING:
+            self._state = Tone.State.FADING_OUT
+            self._create_fade(1, 0, duration)
+            self._fade_pos=0
 
         
     def click(self, duration):
@@ -188,7 +190,10 @@ class Tone:
             self._fill(fade, op=operator.imul)
 
             # Copy the data to outdata
-            outdata[:fade_length] = fade[:]
+            if op is None:
+                outdata[:fade_length] = fade[:]
+            else:
+                op(outdata[:fade_length], fade[:])
             
             # Update the position in the fade
             self._fade_pos += fade_length
@@ -202,13 +207,17 @@ class Tone:
 
                     # If we haven't entirely filled the buffer with the
                     # fade then fill the rest of the buffer now.
-                    self._fill(view)
+                    self._fill(view, op=op)
                 else:
                     self._state = Tone.State.INACTIVE
 
                     # If we haven't entirely filled the buffer with the
                     # fade then fill the rest of the buffer now.
-                    view.fill(0)
+                    if op is None:
+                        view.fill(0)
+                    else:
+                        zeros = numpy.zeros((view.shape), numpy.float32)
+                        op(view, zeros)
                     
 
                 
@@ -239,40 +248,6 @@ class Tone:
                 self._state = Tone.State.INACTIVE
                 self.reset()
                 
-            #self._fill(outdata, op)
-
-        
-
-
-    # def _fade(self, samples, outdata, op, from_, to_):
-    #     # Produce a linear fadeout multiplier
-    #     faded = numpy.linspace(from_, to_, samples)
-
-    #     # Adjust multiplier if two channels are needed
-    #     if outdata.shape[1] == 2:
-    #         faded = numpy.array([[x,x] for x in faded])
-
-    #     # Get the samples as if they were being played, multiplying
-    #     # them by the fadeout
-    #     self.play(samples, faded, op=operator.imul)
-
-    #     # Output the result
-    #     if op is None:
-    #         outdata[:] = faded
-    #     else:
-    #         op(outdata, faded)
-
-            
-    # def fadein(self, samples, outdata, op=None):
-    #     self._fade(samples, outdata, op,
-    #                from_=0, to_=1)
-
-        
-    # def fadeout(self, samples, outdata, op=None):
-    #     self._fade(samples, outdata, op,
-    #                from_=1, to_=0)
-    #     # Reset the position index
-    #     self.reset()
 
 
 if __name__ == "__main__":
@@ -346,7 +321,8 @@ if __name__ == "__main__":
                 v.process_state = ProcessState.CLICK
                 
         elif v.process_state == ProcessState.CLICK:
-            v.process_state = ProcessState.STOP
+            if v.tone.inactive:
+                v.process_state = ProcessState.STOP
             
         elif v.process_state == ProcessState.STOP:
             pass
@@ -388,7 +364,6 @@ if __name__ == "__main__":
             click_duration = 10/1000 # seconds
             v.tone.click(click_duration)
             v.tone.output(outdata)
-            assert v.tone.inactive
             
         elif v.process_state == ProcessState.STOP:
             print("Stop")
