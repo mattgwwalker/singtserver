@@ -153,6 +153,9 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
             self.tone0_tone1_mean = None
             self.tone0_tone1_sd = None
 
+            # Variables for fadeout tone0 and tone1
+            self.fadeout_tone0_tone1_duration = 50/1000 # seconds
+            
             # Variables for detect silence
             self.detect_silence_detected = False
             self.detect_silence_threshold_num_sd = 4 # std. deviations from tone0_tone1
@@ -452,11 +455,8 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
 
 
             elif v.process_state == ProcessState.FADEOUT_TONE0_TONE1:
-                print("Fading out tone #0")
-                v.tones[0].fadeout(50/1000)
-                
-                print("Fading out tone #1")
-                v.tones[1].fadeout(50/1000)
+                v.tones[0].fadeout(v.fadeout_tone0_tone1_duration)
+                v.tones[1].fadeout(v.fadeout_tone0_tone1_duration)
 
                 v.tones[0].output(outdata)
                 v.tones[1].output(outdata, op=operator.iadd)
