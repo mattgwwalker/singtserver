@@ -12,6 +12,19 @@ import queue
 from measure_levels import measure_levels
 from tone import Tone
 
+def process_click_data(q):
+    if q.empty():
+        print("Queue is empty in function")
+    while True:
+        # Get next item from queue
+        try:
+            item = q.get_nowait()
+        except queue.Empty:
+            print("No more data")
+            break
+
+        print(item)
+
 # Phase Two
 # =========
 # Measure latency accurately via clicks
@@ -44,9 +57,13 @@ def measure_latency_phase_two(levels, desired_latency="high", samples_per_second
             # Threading event on which the stream can wait
             self.event = threading.Event()
 
-            # Queue to hold input and output frames for debugging
+            # Queues to hold input and output frames for debugging
             self.q_in = queue.Queue()
             self.q_out = queue.Queue()
+
+            # Queue to hold click-based information for processing
+            # outside of the audio thread.
+            self.q_click = queue.Queue()
             
             # Store samples per second
             self.samples_per_second = samples_per_second
@@ -202,13 +219,19 @@ def measure_latency_phase_two(levels, desired_latency="high", samples_per_second
 
             
         elif v.process_state == ProcessState.PLAY_CLICK:
-            v.tone.click(5/1000)
+            v.tone.click(5/1000) # FIXME
             v.tone.output(outdata)
 
             # Start timing
             v.play_click_start_time = time.outputBufferDacTime
 
             v.play_click_count += 1
+
+            # Queue the details for off-thread processing
+            v.q_click.put_nowait(
+                {"play_click_start_time": v.play_click_start_time,
+                 "play_click_count": v.play_click_count}
+            )
 
                 
         elif v.process_state == ProcessState.DETECT_CLICK:
@@ -231,11 +254,18 @@ def measure_latency_phase_two(levels, desired_latency="high", samples_per_second
             # Measure the number of standard deviations away from silence
             num_sd = abs((mono - v.silence2_mean) / v.silence2_sd)
 
-            if any(num_sd > 10):
+            if any(num_sd > 20):
                 print("Non-silence detected (i.e Click detected)")
                 delay = time.inputBufferAdcTime - v.play_click_start_time
                 print("delay:",round(delay*1000),"ms")
-            
+                print("clock delta:",(time.outputBufferDacTime - time.inputBufferAdcTime)*1000,"ms")
+
+            # Queue the details for off-thread processing
+            v.q_click.put_nowait(
+                {"mono": mono}
+            )
+
+                
         elif v.process_state == ProcessState.CLEANUP:
             # Play tone #0 as it shouldn't shut down
             v.tones[0].play(samples, outdata)
@@ -248,7 +278,11 @@ def measure_latency_phase_two(levels, desired_latency="high", samples_per_second
 
             # Increment the number of cleanup cycles
             v.cleanup_cycles += 1
-            
+
+            # Queue the details for off-thread processing
+            v.q_click.put_nowait(
+                {"end":True}
+            )
                 
         elif v.process_state == ProcessState.COMPLETED:
             # Actively fill outdata with zeros
@@ -266,8 +300,8 @@ def measure_latency_phase_two(levels, desired_latency="high", samples_per_second
         
         # Store output
         # ============
-        v.q_in.put(indata.copy())
-        v.q_out.put(outdata.copy())
+        v.q_in.put_nowait(indata.copy())
+        v.q_out.put_nowait(outdata.copy())
 
         # Terminate if required
         # =====================
@@ -289,6 +323,12 @@ def measure_latency_phase_two(levels, desired_latency="high", samples_per_second
         v.event.wait()  # Wait until measurement is finished
 
 
+    print("Processing click data...")
+    if v.q_click.empty():
+        print("Queue is empty")
+    print(v.q_click.get_nowait())
+    process_click_data(v.q_click)
+        
     # Save output as wave file
     print("Writing output wave file")
     wave_file = wave.open("out.wav", "wb")
@@ -367,4 +407,4 @@ if __name__ == "__main__":
 
     input() # wait for enter key
 
-    _measure_latency("high")
+    _measure_latency("low")
