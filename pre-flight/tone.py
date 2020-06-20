@@ -214,6 +214,7 @@ class Tone:
                     self._fill(view, op=op)
                 else:
                     self._state = Tone.State.INACTIVE
+                    self._pos = 0
 
                     # If we haven't entirely filled the buffer with the
                     # fade then fill the rest of the buffer now.
@@ -374,6 +375,8 @@ if __name__ == "__main__":
             click_duration = 10/1000 # seconds
             v.tone.click(click_duration)
             v.tone.output(outdata)
+
+            
             
         elif v.process_state == ProcessState.STOP:
             print("Stop")
