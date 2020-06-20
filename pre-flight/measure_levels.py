@@ -9,196 +9,8 @@ import threading
 import math
 import operator
 import wave
-
-# Fast Fourier Transform for recorded samples, specifically focused on
-# certain frequencies.
-class FFTAnalyser:
-    def __init__(self, samples_per_second):
-        # Number of samples for FFT analysis.  256 samples is
-        # approximately 5ms at 48kHz.
-        self._n = 256
-
-        self._samples_per_second = samples_per_second
-
-        fft_freqs = numpy.fft.rfftfreq(self._n) * samples_per_second
-        self._freq_indices = [2, 5]
-        self._freqs = [fft_freqs[i] for i in self._freq_indices]
-
-        print("FFT analysis configured for frequencies (Hz):", self._freqs)
-
-    
-    @property
-    def n_freqs(self):
-        """Gives the number of frequencies returned by the run() method."""
-        return len(self._freq_indices)
-
-
-    @property
-    def freqs(self):
-        """Gives the frequencies focussed on by this analyser."""
-        return self._freqs
-
-
-    @property
-    def window_width(self):
-        """The width of the FFT window in seconds."""
-        return self._n / self._samples_per_second
-    
-
-    def run(self, rec_pcm, rec_position):
-        # If we have more than the required number of samples
-        # recorded, execute FFT analysis
-        if rec_position > self._n:
-            # If we've got stereo data, average together the two
-            # channels
-            channels = rec_pcm.shape[1]
-            if channels == 2:
-                left = rec_pcm[rec_position-self._n:rec_position, 0]
-                right = rec_pcm[rec_position-self._n:rec_position, 1]
-                mono = (left+right) / 2
-            elif channels == 1:
-                mono = rec_pcm[rec_position-self._n:rec_position, 0]
-            else:
-                raise Exception(
-                    "Attempted to analyse data with an unsupported "+
-                    "number of channels ({:d})".format(channels)
-                )
-
-            y = numpy.fft.rfft(
-                # Use of Hann window to reduce spectral leakage (see
-                # https://stackoverflow.com/questions/8573702/units-of-frequency-when-using-fft-in-numpy)
-                # I'm not sure this is really necessary.
-                mono * numpy.hanning(len(mono)), 
-                n=self._n
-            )
-            y = numpy.abs(y)
-
-            return y[self._freq_indices]
-        
-        else:
-            # We don't have enough samples to analyse
-            return None
-    
-
-# TODO: Tone would be better re-written so that it accepted commands
-# (play, stop, fade-out-over-x-seconds) and stored those commands in
-# internal state.  It would have another method, say, execute() which
-# copied the appropriate data into the outdata.  The advantage of this
-# approach would be fade-outs over periods longer than the frame size,
-# and stopping that finished on a zero-crossing, which would stop
-# clicks.
-
-class Tone:
-    def __init__(self, freq, duration=1.0, samples_per_second=48000, channels=2, max_level=1):
-        """Freq in Hz, duration in seconds.  Will extend the duration so that
-        a whole number of wavelengths are formed."""
-        # Extend the duration so that the PCM finishes on a
-        # zero-crossing.
-        duration_wavelength = 1 / freq
-        num_wavlengths = math.ceil(duration / duration_wavelength)
-        duration = num_wavlengths * duration_wavelength
-        
-        t = numpy.linspace(
-            0,
-            duration,
-            int(duration * samples_per_second),
-            False
-        )
-
-        pcm = numpy.sin(freq * t * 2 * numpy.pi)
-
-        if channels == 2:
-            two_channels = [[x,x] for x in pcm]
-            self._pcm = numpy.array(two_channels, dtype=numpy.float32)
-        else:
-            self._pcm = pcm
-
-        # Noramlise
-        self._pcm *= max_level
-
-        self._pos = 0
-
-        
-    def reset(self):
-        """Resets the position index to zero."""
-        self._pos = 0
-    
-        
-    def play(self, samples, outdata, op = None):
-        """Op needs to be an in-place operator (see
-        https://docs.python.org/3/library/operator.html)"""
-        # Ensure the number of channels is the same
-        assert outdata.shape[1] == self._pcm.shape[1]
-        
-        if self._pos+samples <= len(self._pcm):
-            # Copy tone in one hit
-            data = self._pcm[self._pos:self._pos+samples]
-            if op is None:
-                outdata[:] = data
-            else:
-                op(outdata, data)
-            self._pos += samples
-        else:
-            # Need to loop back to the beginning of the tone
-            remaining = len(self._pcm)-self._pos
-            head = self._pcm[self._pos:len(self._pcm)]
-            tail = self._pcm[:samples-remaining]
-            if op is None:
-                outdata[:remaining] = head
-                outdata[remaining:] = tail
-            else:
-                op(outdata[:remaining], head)
-                op(outdata[remaining:], tail)
-
-            self._pos = samples-remaining
-
-            
-    def stop(self, samples, outdata, op=None):
-        # TODO: To implement this method, the class needs to be
-        # re-written to have the state of a current command.  This is
-        # because "stop" might take far more than one frame to find
-        # the next zero crossing.
-        
-        # Calculate the number of samples to the next
-        # end-of-wavelength (a zero-crossing)
-
-        # Play
-        pass
-        
-
-
-    def _fade(self, samples, outdata, op, from_, to_):
-        # Produce a linear fadeout multiplier
-        faded = numpy.linspace(from_, to_, samples)
-
-        # Adjust multiplier if two channels are needed
-        if outdata.shape[1] == 2:
-            faded = numpy.array([[x,x] for x in faded])
-
-        # Get the samples as if they were being played, multiplying
-        # them by the fadeout
-        self.play(samples, faded, op=operator.imul)
-
-        # Output the result
-        if op is None:
-            outdata[:] = faded
-        else:
-            op(outdata, faded)
-
-            
-    def fadein(self, samples, outdata, op=None):
-        self._fade(samples, outdata, op,
-                   from_=0, to_=1)
-
-        
-    def fadeout(self, samples, outdata, op=None):
-        self._fade(samples, outdata, op,
-                   from_=1, to_=0)
-        # Reset the position index
-        self.reset()
-
-
-
+from tone import Tone
+from fft_analyser import FFTAnalyser
         
 # Measure Levels
 # ==============
@@ -288,6 +100,17 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
             # Specifiy the minimum number of samples
             self.min_num_samples = 50
 
+            # Variables for tones
+            tone_duration = 1 # second
+            n_tones = len(self.fft_analyser.freqs)
+            self.tones = [Tone(freq,
+                               self.samples_per_second,
+                               output_channels,
+                               max_level = 1/n_tones,
+                               duration = tone_duration)
+                          for freq in self.fft_analyser.freqs]
+
+            
             # Variables for the measurement of levels of silence
             self.silence_threshold_duration = 0.5 # seconds
             self.silence_levels = []
@@ -298,16 +121,9 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
             self.silence_sd_threshold = 1e-6
             self.silence_max_time_in_state = 5 # seconds
 
-            # Variables for tones
-            self.tone_duration = 1 # second
-            n_tones = len(self.fft_analyser.freqs)
-            self.tones = [Tone(freq,
-                               self.tone_duration,
-                               self.samples_per_second,
-                               output_channels,
-                               1/n_tones)
-                          for freq in self.fft_analyser.freqs]
-
+            # Variables for fadein tone0
+            self.fadein_tone0_duration = 50/1000 # seconds
+            
             # Variables for non-silence
             self.non_silence_threshold_num_sd = 4 # number of std. deviations away from silence
             self.non_silence_threshold_duration = 0.5 # seconds of non-silence
@@ -358,8 +174,10 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
             self.measure_silence2_start_time = None
             self.silence2_mean = None
             self.silence2_sd = None
+            
             # Variable to store error during audio processing
             self.error = None
+            self.exception = None
 
             
     # Create an instance of the shared variables
@@ -459,7 +277,8 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
 
 
             elif v.process_state == ProcessState.FADEOUT_TONE0_TONE1:
-                v.process_state = ProcessState.DETECT_SILENCE
+                if v.tones[0].inactive and v.tones[1].inactive:
+                    v.process_state = ProcessState.DETECT_SILENCE
 
 
             elif v.process_state == ProcessState.DETECT_SILENCE:
@@ -530,12 +349,13 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
 
             elif v.process_state == ProcessState.FADEIN_TONE0:
                 print("Fading in tone #0")
-                v.tones[0].fadein(samples, outdata)
+                v.tones[0].fadein(v.fadein_tone0_duration)
+                v.tones[0].output(outdata)
 
 
             elif v.process_state == ProcessState.DETECT_TONE0:
-                # Play tone #0
-                v.tones[0].play(samples, outdata)
+                # Continue playing tone #0
+                v.tones[0].output(outdata)
 
                 # Calculate the number of standard deviations from silence
                 num_sd = (tones_level[0] - v.silence_mean[0]) / v.silence_sd[0]
@@ -554,8 +374,8 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
 
 
             elif v.process_state == ProcessState.MEASURE_TONE0:
-                # Play tone #0
-                v.tones[0].play(samples, outdata)
+                # Continue playing tone #0
+                v.tones[0].output(outdata)
 
                 # Start the timer if not started
                 if v.tone0_start_time is None:
@@ -581,9 +401,11 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
 
 
             elif v.process_state == ProcessState.DETECT_TONE1:
-                # Play tones
-                v.tones[0].play(samples, outdata)
-                v.tones[1].play(samples, outdata, op=operator.iadd)
+                # Continue playing tone #0
+                v.tones[0].output(outdata)
+                # Start playing tone #1
+                v.tones[1].play()
+                v.tones[1].output(outdata, op=operator.iadd)
 
                 # Calculate the number of standard deviations from not-tone1
                 num_sd = (tones_level[1] - v.tone0_mean[1]) / v.tone0_sd[1]
@@ -602,9 +424,9 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
 
 
             elif v.process_state == ProcessState.MEASURE_TONE0_TONE1:
-                # Play tones
-                v.tones[0].play(samples, outdata)
-                v.tones[1].play(samples, outdata, op=operator.iadd)
+                # Continue playing tones
+                v.tones[0].output(outdata)
+                v.tones[1].output(outdata, op=operator.iadd)
 
                 # Start the timer if not started
                 if v.tone0_tone1_start_time is None:
@@ -631,10 +453,15 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
 
             elif v.process_state == ProcessState.FADEOUT_TONE0_TONE1:
                 print("Fading out tone #0")
-                v.tones[0].fadeout(samples, outdata)
+                v.tones[0].fadeout(50/1000)
+                
                 print("Fading out tone #1")
-                v.tones[1].fadeout(samples, outdata, op=operator.iadd)                
+                v.tones[1].fadeout(50/1000)
 
+                v.tones[0].output(outdata)
+                v.tones[1].output(outdata, op=operator.iadd)
+
+                
 
             elif v.process_state == ProcessState.DETECT_SILENCE:
                 # Actively fill the output buffer
@@ -758,12 +585,9 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
         print("WARNING: No data to write to out.wav")
 
     # Ensure that we have valid results
-    try:
+    if v.exception:
+        print("ERROR: Exception caught in callback:")
         raise v.exception
-    except:
-        # If there's an exception raised while attempting to re-raise
-        # an exception, just ignore it.
-        pass
     
     if v.error is not None:
         raise Exception("Failed to detect levels of the different tones: "+v.error)
