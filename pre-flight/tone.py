@@ -241,10 +241,14 @@ class Tone:
                 # Fill up to the stop point and then fill with zeros
                 view = outdata[:samples_remaining]
                 self._fill(view, op)
-                outdata[samples_remaining:] = numpy.zeros(
+                zeros = numpy.zeros(
                     (samples - samples_remaining,channels),
                     numpy.float32
                 )
+                if op is None:
+                    outdata[samples_remaining:] = zeros
+                else:
+                    op(outdata[samples_remaining:], zeros)
                 self._state = Tone.State.INACTIVE
                 self.reset()
                 
