@@ -128,7 +128,7 @@ class Tone:
             # Copy tone in one hit
             data = self._pcm[self._pos:self._pos+samples]
             if op is None:
-                outdata[:] = data
+                outdata[:] = data[:]
             else:
                 op(outdata, data)
             self._pos += samples
@@ -138,11 +138,11 @@ class Tone:
             head = self._pcm[self._pos:len(self._pcm)]
             tail = self._pcm[:samples-remaining]
             if op is None:
-                outdata[:remaining] = head
-                outdata[remaining:] = tail
+                outdata[:remaining] = head[:]
+                outdata[remaining:] = tail[:]
             else:
-                op(outdata[:remaining], head)
-                op(outdata[remaining:], tail)
+                op(outdata[:remaining], head[:])
+                op(outdata[remaining:], tail[:])
 
             self._pos = samples-remaining
 
@@ -160,7 +160,11 @@ class Tone:
         samples = outdata.shape[0]
 
         if self._state == Tone.State.INACTIVE:
-            outdata.fill(0)
+            if op is None:
+                outdata.fill(0)
+            else:
+                zeros = numpy.zeros((outdata.shape), numpy.float32)
+                op(outdata, zeros)
         
         if self._state == Tone.State.PLAYING:
             self._fill(outdata, op)
@@ -218,7 +222,6 @@ class Tone:
                     else:
                         zeros = numpy.zeros((view.shape), numpy.float32)
                         op(view, zeros)
-                    
 
                 
         if self._state == Tone.State.STOPPING:
@@ -235,20 +238,23 @@ class Tone:
             if samples_remaining > samples:
                 # We can't stop in the current frame, so just fill as
                 # normal
+                print("WARNING: Can't stop in the current frame")
                 self._fill(outdata, op)
             else:
                 # We can stop in the current frame.
-                # Fill up to the stop point and then fill with zeros
-                view = outdata[:samples_remaining]
-                self._fill(view, op)
+                # Fill up to the stop point and then fill with zeros.
+                view1 = outdata[:samples_remaining]
+                self._fill(view1, op)
+                
+                view2 = outdata[samples_remaining:]
                 zeros = numpy.zeros(
                     (samples - samples_remaining,channels),
                     numpy.float32
                 )
                 if op is None:
-                    outdata[samples_remaining:] = zeros
+                    view2[:] = zeros[:]
                 else:
-                    op(outdata[samples_remaining:], zeros)
+                    op(view2, zeros)
                 self._state = Tone.State.INACTIVE
                 self.reset()
                 
