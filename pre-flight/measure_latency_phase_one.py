@@ -8,7 +8,10 @@ import threading
 import math
 import operator
 import wave
-from measure_levels import measure_levels, FFTAnalyser, Tone
+import queue
+from measure_levels import measure_levels
+from tone import Tone
+from fft_analyser import FFTAnalyser
 
 # Phase One
 # =========
@@ -43,12 +46,19 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
 
             # Threading event on which the stream can wait
             self.event = threading.Event()
-            
+
+            # Queue to save output data for debugging
+            self.q = queue.Queue()
+
+            # Store samples per second parameter
             self.samples_per_second = samples_per_second
         
             # Allocate space for recording
-            max_recording_duration = 2 #seconds
-            max_recording_samples = max_recording_duration * samples_per_second
+            max_recording_duration = 2 # seconds
+            max_recording_samples = (
+                max_recording_duration
+                * samples_per_second
+            )
             self.rec_pcm = numpy.zeros((
                 max_recording_samples,
                 input_channels
@@ -70,10 +80,10 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
             self.tone_duration = 1 # second
             n_tones = len(self.fft_analyser.freqs)
             self.tones = [Tone(freq,
-                               self.tone_duration,
                                self.samples_per_second,
-                               output_channels,
-                               1/n_tones)
+                               channels = output_channels,
+                               max_level = 1/n_tones,
+                               duration = self.tone_duration)
                           for freq in self.fft_analyser.freqs]
 
             # Variables for levels
@@ -94,18 +104,23 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
             
             # Variables for START_TONE0_TONE1
             self.start_tone0_tone1_start_play_time = None
-
+            self.start_tone0_tone1_fadein_duration = 5/1000 # seconds
+            
             # Variables for DETECT_TONE0_TONE1
             self.detect_tone0_tone1_start_detect_time = None
             self.detect_tone0_tone1_threshold_num_sd = 4
-            self.detect_tone0_tone1_threshold_duration = 0.05 # seconds
+            self.detect_tone0_tone1_threshold_duration = 50/1000 # seconds
             self.detect_tone0_tone1_max_time_in_state = 5 # seconds
             self.detect_tone0_tone1_detected = False
 
             # Variables for CLEANUP
             self.cleanup_cycles = 0
             self.cleanup_cycles_threshold = 3
+            self.cleanup_fadeout_duration = 5/1000 # seconds
 
+            # Variables for COMPLETING
+            self.completing_fadeout_duration = 50/1000 # seconds
+            
     # Create an instance of the shared variables
     v = SharedVariables(samples_per_second)
 
@@ -129,7 +144,10 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
     # buffer depends on the latency requested.
     def callback(indata, outdata, samples, time, status):
         nonlocal v
-        
+
+        # Store any exceptions to be raised
+        exception = None
+
         # Store Recording
         # ===============
         
@@ -184,10 +202,17 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
 
         elif v.process_state == ProcessState.CLEANUP:
             if v.cleanup_cycles > v.cleanup_cycles_threshold:
-                v.process_state = ProcessState.COMPLETED
+                v.process_state = ProcessState.COMPLETING
             else:
                 v.process_state = ProcessState.START_TONE0
                 
+        elif v.process_state == ProcessState.COMPLETING:
+            if v.tones[0].inactive and v.tones[1].inactive:
+                v.process_state = ProcessState.COMPLETED
+        
+        elif v.process_state == ProcessState.COMPLETED:
+            pass
+        
         elif v.process_state == ProcessState.ABORTED:
             pass    
                 
@@ -201,14 +226,19 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
         # ======
 
         if v.process_state == ProcessState.RESET:
-            # It's a requirement that outdata is always actively
-            # filled
-            outdata.fill(0)
+            # Ensure tone #0 is stopped
+            v.tones[0].stop()
+            v.tones[0].output(outdata)
+
+            # Ensure tone #1 is stopped
+            v.tones[1].stop()
+            v.tones[1].output(outdata)
 
             
         elif v.process_state == ProcessState.START_TONE0:
             # Play tone #0
-            v.tones[0].play(samples, outdata)
+            v.tones[0].play()
+            v.tones[0].output(outdata)
             
             # Start the timer from the moment the system says it will
             # play the audio.
@@ -217,7 +247,8 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
             
         elif v.process_state == ProcessState.DETECT_TONE0:
             # Play tone #0
-            v.tones[0].play(samples, outdata)
+            v.tones[0].play()
+            v.tones[0].output(outdata)
 
             if tones_level is not None:
                 # Are we hearing the tone?  Ensure we're within an
@@ -252,7 +283,12 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
                 
         elif v.process_state == ProcessState.START_TONE0_TONE1:
             # Play tone #0 as it should be on in the background
-            v.tones[0].play(samples, outdata)
+            v.tones[0].play()
+            v.tones[0].output(outdata)
+
+            # Start playing tone #1
+            v.tones[1].fadein(v.start_tone0_tone1_fadein_duration)
+            v.tones[1].output(outdata, operator.iadd)
             
             # Start the timer from the moment the system says it will
             # play the audio.
@@ -261,8 +297,8 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
             
         elif v.process_state == ProcessState.DETECT_TONE0_TONE1:
             # Play both tones
-            v.tones[0].play(samples, outdata)
-            v.tones[1].play(samples, outdata, op=operator.iadd)
+            v.tones[0].output(outdata)
+            v.tones[1].output(outdata, op=operator.iadd)
 
             if tones_level is not None:
                 # Are we hearing the tone?  Ensure we're within an
@@ -300,7 +336,12 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
                 
         elif v.process_state == ProcessState.CLEANUP:
             # Play tone #0 as it shouldn't shut down
-            v.tones[0].play(samples, outdata)
+            v.tones[0].play()
+            v.tones[0].output(outdata)
+
+            # Shut down tone #1
+            v.tones[1].fadeout(v.cleanup_fadeout_duration)
+            v.tones[1].output(outdata, op=operator.iadd)
 
             # Reset key variables
             v.detect_tone0_start_detect_time = None            
@@ -312,11 +353,20 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
             v.cleanup_cycles += 1
             
                 
+        elif v.process_state == ProcessState.COMPLETING:
+            print("Completing")
+            v.tones[0].fadeout(v.completing_fadeout_duration) #FIXME
+            v.tones[0].output(outdata)
+
+            v.tones[1].fadeout(v.completing_fadeout_duration)
+            v.tones[1].output(outdata, op=operator.iadd)
+
+
         elif v.process_state == ProcessState.COMPLETED:
-            # Actively fill outdata with zeros
             outdata.fill(0)
+
             print("Completed phase one latency measurement")
-            raise sd.CallbackStop
+            exception = sd.CallbackStop
 
         
         elif v.process_state == ProcessState.ABORTED:
@@ -325,7 +375,16 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
             print("Aborted phase one latency measurement")
             raise sd.CallbackAbort
 
-    
+        
+        # Store output
+        # ============
+        v.q.put(outdata.copy())
+
+        # Terminate if required
+        # =====================
+        if exception is not None:
+            raise exception
+
 
     # Play first tone
     # Open a read-write stream
@@ -341,6 +400,23 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
     with stream:
         v.event.wait()  # Wait until measurement is finished
 
+    # Save output as wave file
+    print("Writing wave file")
+    wave_file = wave.open("out.wav", "wb")
+    wave_file.setnchannels(2) #FIXME
+    wave_file.setsampwidth(2)
+    wave_file.setframerate(samples_per_second)
+    while True:
+        try:
+            data = v.q.get_nowait()
+        except:
+            break
+        data = data * (2**15-1)
+        data = data.astype(numpy.int16)
+        wave_file.writeframes(data)
+    wave_file.close()
+
+        
     # Done!
     print("Finished.")
 
