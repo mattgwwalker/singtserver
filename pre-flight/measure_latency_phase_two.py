@@ -12,9 +12,11 @@ import queue
 from measure_levels import measure_levels
 from tone import Tone
 
-def process_click_data(q):
+def process_click_data(q, detection_threshold):
     if q.empty():
         print("Queue is empty in function")
+
+    results = []
     while True:
         # Get next item from queue
         try:
@@ -23,7 +25,65 @@ def process_click_data(q):
             print("No more data")
             break
 
-        print(item)
+        #print(item.keys())
+
+        try:
+            play_click_start_time = item["play_click_start_time"]
+            clock_delta = item["clock_delta"]
+            play_click_count = item["play_click_count"]
+
+            click_detected_start_time = None
+            click_detected_end_time = None
+            multiple_detections = False
+        except KeyError:
+            # We can't be at the start of a click
+            pass
+
+        try:
+            time = item["time"]
+            mono = item["mono"]
+
+            detected = mono > detection_threshold
+
+            if any(detected):
+                #print("Detected")
+                # Loop through levels and find start and end times for the click
+                samples_per_second = 48000 # FIXME
+                wave_length = 1/375 # FIXME
+                for i, d in enumerate(detected):
+                    if d:
+                        t = time + i/samples_per_second
+                        #print("at time",t)
+                        if click_detected_start_time is None:
+                            click_detected_start_time = t
+                            click_detected_end_time = t
+                        elif t < click_detected_end_time + wave_length*3: #FIXME
+                            click_detected_end_time = t
+                        else:
+                            multiple_detections = True
+        except KeyError:
+            # We don't have data to process
+            pass
+
+        try:
+            assert item["end"] == True
+
+            # Store results from just processed click data
+            if not multiple_detections:
+                measured_delta = click_detected_start_time - play_click_start_time
+                latency = clock_delta + measured_delta
+                results.append(latency)
+            else:
+                print("Multiple click detections")
+        except KeyError:
+            pass
+            
+    print("Latency results (ms):")
+    print(numpy.round(numpy.array(results, numpy.float32)*1000))
+        
+
+        
+            
 
 # Phase Two
 # =========
@@ -88,9 +148,11 @@ def measure_latency_phase_two(levels, desired_latency="high", samples_per_second
             # Variable to record when we entered the current state
             self.state_start_time = None
 
-            # Variables for levels
-            self.silence2_mean = levels["silence2_mean"]
-            self.silence2_sd = levels["silence2_sd"]
+            # Variables from levels
+            self.silence_abs_pcm_mean = levels["silence_abs_pcm_mean"]
+            self.silence_abs_pcm_sd = levels["silence_abs_pcm_sd"]
+            self.tone0_abs_pcm_mean = levels["tone0_abs_pcm_mean"]
+            self.ton0_abs_pcm_sd = levels["tone0_abs_pcm_sd"]
 
             # Variables for detect silence
             self.detect_silence_detected = False
@@ -163,16 +225,18 @@ def measure_latency_phase_two(levels, desired_latency="high", samples_per_second
                 v.process_state = ProcessState.PLAY_CLICK
             
         elif v.process_state == ProcessState.PLAY_CLICK:
-            if v.tone.inactive:
-                v.process_state = ProcessState.DETECT_CLICK
+            v.process_state = ProcessState.DETECT_CLICK
 
         elif v.process_state == ProcessState.DETECT_CLICK:
-            if v.play_click_count >= 5:
-                v.process_state = ProcessState.COMPLETED
-            
             if time.inputBufferAdcTime - v.play_click_start_time > 0.5: #FIXME
-                v.process_state = ProcessState.PLAY_CLICK
+                v.process_state = ProcessState.CLEANUP
             
+        elif v.process_state == ProcessState.CLEANUP:
+            if v.play_click_count >= 5: #FIXME
+                v.process_state = ProcessState.COMPLETED
+            else:
+                v.process_state = ProcessState.PLAY_CLICK
+        
         elif v.process_state == ProcessState.COMPLETED:
             pass
 
@@ -198,7 +262,10 @@ def measure_latency_phase_two(levels, desired_latency="high", samples_per_second
             
             # Are we hearing silence?  Ensure we're within an
             # acceptable number of standard deviations from the mean.
-            num_sd = abs((indata - v.silence2_mean) / v.silence2_sd)
+            abs_pcm = abs(indata)
+            num_sd = abs((abs_pcm - v.silence_abs_pcm_mean) / v.silence_abs_pcm_sd)
+
+            # Flatten the results in case we have more than one channel
             num_sd = num_sd.reshape((indata.shape[0] * indata.shape[1],))
 
             #print(num_sd)
@@ -227,15 +294,24 @@ def measure_latency_phase_two(levels, desired_latency="high", samples_per_second
 
             v.play_click_count += 1
 
+            clock_delta = (
+                time.outputBufferDacTime
+                - time.inputBufferAdcTime
+            )
+            
             # Queue the details for off-thread processing
             v.q_click.put_nowait(
                 {"play_click_start_time": v.play_click_start_time,
-                 "play_click_count": v.play_click_count}
+                 "play_click_count": v.play_click_count,
+                 "clock_delta": clock_delta
+                }
             )
 
                 
         elif v.process_state == ProcessState.DETECT_CLICK:
-            outdata.fill(0)
+            # Continue to output click, which will rapidly become
+            # inactive and output zeros.
+            v.tone.output(outdata)
 
             # If we have two channels, average them to give us a mono channel
             channels = indata.shape[1]
@@ -252,41 +328,29 @@ def measure_latency_phase_two(levels, desired_latency="high", samples_per_second
                 )
             
             # Measure the number of standard deviations away from silence
-            num_sd = abs((mono - v.silence2_mean) / v.silence2_sd)
-
-            if any(num_sd > 20):
-                print("Non-silence detected (i.e Click detected)")
-                delay = time.inputBufferAdcTime - v.play_click_start_time
-                print("delay:",round(delay*1000),"ms")
-                print("clock delta:",(time.outputBufferDacTime - time.inputBufferAdcTime)*1000,"ms")
+            num_sd = abs((mono - v.silence_abs_pcm_mean) / v.silence_abs_pcm_sd)
 
             # Queue the details for off-thread processing
             v.q_click.put_nowait(
-                {"mono": mono}
+                {"time": time.inputBufferAdcTime,
+                 "mono": mono}
             )
 
                 
         elif v.process_state == ProcessState.CLEANUP:
-            # Play tone #0 as it shouldn't shut down
-            v.tones[0].play(samples, outdata)
-
-            # Reset key variables
-            v.detect_tone0_start_detect_time = None            
-            v.detect_tone0_detected = False
-            v.detect_tone0_tone1_start_detect_time = None            
-            v.detect_tone0_tone1_detected = False
-
-            # Increment the number of cleanup cycles
-            v.cleanup_cycles += 1
-
+            # This should be inactive, and thus just output zeros
+            v.tone.output(outdata)
+            
             # Queue the details for off-thread processing
             v.q_click.put_nowait(
                 {"end":True}
             )
-                
+            
+            
         elif v.process_state == ProcessState.COMPLETED:
             # Actively fill outdata with zeros
             outdata.fill(0)
+
             print("Completed phase two latency measurement")
             exception = sd.CallbackStop
 
@@ -324,10 +388,8 @@ def measure_latency_phase_two(levels, desired_latency="high", samples_per_second
 
 
     print("Processing click data...")
-    if v.q_click.empty():
-        print("Queue is empty")
-    print(v.q_click.get_nowait())
-    process_click_data(v.q_click)
+    detection_threshold = (v.silence_abs_pcm_mean + v.tone0_abs_pcm_mean)/2
+    process_click_data(v.q_click, detection_threshold)
         
     # Save output as wave file
     print("Writing output wave file")
@@ -407,4 +469,4 @@ if __name__ == "__main__":
 
     input() # wait for enter key
 
-    _measure_latency("low")
+    _measure_latency("high")
