@@ -23,7 +23,7 @@ from fft_analyser import FFTAnalyser
 # tone #1 and wait until we detect not-not-tone#1.  Finally, measure
 # levels of tone #0 and tone #1.
 
-def measure_levels(desired_latency="low", samples_per_second=48000):
+def measure_levels(desired_latency="high", samples_per_second=48000):
     # Get number of channels from input and output devices
     device_strings = sd.query_devices()
     default_input_index = sd.default.device[0]
@@ -79,7 +79,10 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
         
             # Allocate space for recording
             max_recording_duration = 2 #seconds
-            max_recording_samples = max_recording_duration * samples_per_second
+            max_recording_samples = (
+                max_recording_duration
+                * samples_per_second
+            )
             self.rec_pcm = numpy.zeros((
                 max_recording_samples,
                 input_channels
@@ -97,14 +100,14 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
             # Variable to record when we entered the current state
             self.state_start_time = None
 
-            # Specifiy the minimum number of samples
+            # Specify the minimum number of samples
             self.min_num_samples = 50
 
             # Variables for tones
             tone_duration = 1 # second
             n_tones = len(self.fft_analyser.freqs)
             self.tones = [Tone(freq,
-                               self.samples_per_second,
+                               samples_per_second,
                                output_channels,
                                max_level = 1/n_tones,
                                duration = tone_duration)
@@ -138,6 +141,13 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
             self.tone0_threshold_duration = 1.5 # seconds of tone0 and not tone1
             self.tone0_mean = None
             self.tone0_sd = None
+            self.tone0_pcm = numpy.zeros((
+                int(self.tone0_threshold_duration * samples_per_second),
+                input_channels
+            ))
+            self.tone0_pcm_pos = 0
+            self.tone0_abs_pcm_mean = None
+            self.tone0_abs_pcm_sd = None
 
             # Variables for detection of tone1
             self.detect_tone1_threshold_num_sd = 4 # number of std. deviations away from not-tone1
@@ -175,8 +185,8 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
             ))
             self.measure_silence2_pcm_pos = 0
             self.measure_silence2_start_time = None
-            self.silence2_mean = None
-            self.silence2_sd = None
+            self.silence_abs_pcm_mean = None
+            self.silence_abs_pcm_sd = None
             
             # Variable to store error during audio processing
             self.error = None
@@ -293,8 +303,8 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
                     v.process_state = ProcessState.ABORTED
 
             elif v.process_state == ProcessState.MEASURE_SILENCE2:
-                if v.silence2_mean is not None and \
-                   v.silence2_sd is not None:
+                if v.silence_abs_pcm_mean is not None and \
+                   v.silence_abs_pcm_sd is not None:
                     v.process_state = ProcessState.COMPLETED
 
             elif v.process_state == ProcessState.COMPLETING:
@@ -386,8 +396,18 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
 
                 # TODO: Should we check that we've got non-silence?
 
-                # Save the levels because we assume we're hearing tone #0
+                # Save the frequency levels because we assume we're
+                # hearing tone #0
                 v.tone0_levels.append(tones_level)
+
+                # Save the PCM levels too
+                samples_to_copy = len(outdata)
+                if v.tone0_pcm_pos + samples_to_copy > len(v.tone0_pcm):
+                    samples_to_copy = len(v.tone0_pcm) - v.tone0_pcm_pos
+                v.tone0_pcm[v.tone0_pcm_pos:v.tone0_pcm_pos+samples_to_copy] = \
+                    indata[:samples_to_copy]
+                v.tone0_pcm_pos += samples_to_copy
+                    
 
                 duration = time.currentTime - v.tone0_start_time
                 if duration > v.tone0_threshold_duration:
@@ -398,6 +418,14 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
                         print("tone0_mean:",v.tone0_mean)
                         print("tone0_sd:", v.tone0_sd)
                         print("tone0 number of samples:", len(v.tone0_levels))
+
+                        # Also calculate the PCM levels
+                        abs_pcm = numpy.abs(v.tone0_pcm)
+                        v.tone0_abs_pcm_mean = numpy.mean(abs_pcm)
+                        v.tone0_abs_pcm_sd = numpy.std(abs_pcm)
+                        print("tone0_abs_pcm_mean:", v.tone0_abs_pcm_mean)
+                        print("tone0_abs_pcm_sd:", v.tone0_abs_pcm_sd)
+                        print("number of samples:", len(abs_pcm))
                     else:
                         print("We haven't collected sufficient samples; increasing sampling time by half a second")
                         v.tone0_threshold_duration += 0.5
@@ -507,14 +535,11 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
                 # Check if we've filled the buffer
                 if v.measure_silence2_pcm_pos >= len(v.measure_silence2_pcm):
                     # Calculate the mean and std dev
-                    v.silence2_mean = numpy.mean(
-                        abs(v.measure_silence2_pcm)
-                    )
-                    v.silence2_sd = numpy.std(
-                        v.measure_silence2_pcm
-                    )
-                    print("silence2_mean:", v.silence2_mean)
-                    print("silence2_sd:", v.silence2_sd)
+                    abs_pcm = numpy.abs(v.measure_silence2_pcm)
+                    v.silence_abs_pcm_mean = numpy.mean(abs_pcm)
+                    v.silence_abs_pcm_sd = numpy.std(abs_pcm)
+                    print("silence_abs_pcm_mean:", v.silence_abs_pcm_mean)
+                    print("silence_abs_pcm_sd:", v.silence_abs_pcm_sd)
                     print("number of samples:", len(v.measure_silence2_pcm))
 
                 
@@ -598,10 +623,12 @@ def measure_levels(desired_latency="low", samples_per_second=48000):
     return {
         "tone0_mean": v.tone0_mean,
         "tone0_sd": v.tone0_sd,
+        "tone0_abs_pcm_mean": v.tone0_abs_pcm_mean,
+        "tone0_abs_pcm_sd": v.tone0_abs_pcm_sd,
         "tone0_tone1_mean": v.tone0_tone1_mean,
         "tone0_tone1_sd": v.tone0_tone1_sd,
-        "silence2_mean": v.silence2_mean,
-        "silence2_sd": v.silence2_sd
+        "silence_abs_pcm_mean": v.silence_abs_pcm_mean,
+        "silence_abs_pcm_sd": v.silence_abs_pcm_sd
     }
 
 
