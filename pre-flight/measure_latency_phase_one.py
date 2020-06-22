@@ -205,7 +205,7 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
             self.detect_silence_start_detected = False
 
             # Variables for START_TONE
-            self.start_tone_fadein_duration = 20/1000 # seconds
+            self.start_tone_click_duration = 75/1000 # seconds
             
             # Variables for DETECT_TONE
             self.detect_tone_threshold = (
@@ -323,7 +323,8 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
                 v.process_state = ProcessState.ABORTED
 
         elif v.process_state == ProcessState.STOP_TONE:
-            v.process_state = ProcessState.DETECT_SILENCE_END
+            if v.tone.inactive:
+                v.process_state = ProcessState.DETECT_SILENCE_END
 
         elif v.process_state == ProcessState.DETECT_SILENCE_END:
             if v.detect_silence_end_detected:
@@ -384,7 +385,7 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
             
         elif v.process_state == ProcessState.START_TONE:
             # Play tone #0
-            v.tone.fadein(v.start_tone_fadein_duration)
+            v.tone.click(v.start_tone_click_duration)
             v.tone.output(outdata)
             
             # Start the timer from the moment the system says it will
@@ -403,20 +404,22 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
 
             
         elif v.process_state == ProcessState.DETECT_TONE:
-            # Output tone, which is be playing
+            # Output tone, which may or may not be active
             v.tone.output(outdata)
 
             if tones_level is not None:
                 # Are we hearing the tone?
                 if tones_level[0] > v.detect_tone_threshold:
-                    if v.detect_tone_start_detect_time is None:
-                        print("Starting timer")
-                        v.detect_tone_start_detect_time = time.inputBufferAdcTime
-                    else:
-                        detect_duration = time.inputBufferAdcTime - v.detect_tone_start_detect_time
-                        if detect_duration > v.detect_tone_threshold_duration:
-                            print("Tone detected")
-                            v.detect_tone_detected = True
+                    print("Tone detected")
+                    v.detect_tone_detected = True
+                    # if v.detect_tone_start_detect_time is None:
+                    #     print("Starting timer")
+                    #     v.detect_tone_start_detect_time = time.inputBufferAdcTime
+                    # else:
+                    #     detect_duration = time.inputBufferAdcTime - v.detect_tone_start_detect_time
+                    #     if detect_duration > v.detect_tone_threshold_duration:
+                    #         print("Tone detected")
+                    #         v.detect_tone_detected = True
                 else:
                     # Reset timer
                     v.detect_tone_start_detect_time = None
@@ -435,7 +438,7 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
                 
         elif v.process_state == ProcessState.STOP_TONE:
             # Fadeout tone
-            v.tone.fadeout(v.stop_tone_fadeout_duration)
+            #v.tone.fadeout(v.stop_tone_fadeout_duration)
             v.tone.output(outdata)
 
             # Send the data for off-thread analysis
