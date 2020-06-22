@@ -12,6 +12,105 @@ import queue
 from measure_levels import measure_levels
 from tone import Tone
 from fft_analyser import FFTAnalyser
+from scipy import signal
+
+def process_samples(q):
+    # Create arrays to hold the complete
+    max_duration = 10 # seconds
+    samples_per_second = 48000 # FIXME
+    pcm_in = numpy.zeros((
+        max_duration * samples_per_second,
+    ))
+    pcm_in_pos = 0
+    pcm_out = numpy.zeros((
+        max_duration * samples_per_second,
+    ))
+    pcm_out_pos = 0
+
+    count = 0
+           
+    while True:
+        try:
+            item = q.get_nowait()
+        except queue.Empty:
+            print("Finished processing")
+            break
+
+        try:
+            assert item["start"] == True
+            pcm_in_pos = 0
+            pcm_out_pos = 0
+            count += 1
+            internal_delta = item["out_time"] - item["in_time"] 
+            
+        except KeyError:
+            # We can't be at the start
+            pass
+
+        try:
+            # Copy input data
+            indata = item["in"]
+            if indata.shape[1] == 2:
+                # Convert to mono
+                left = indata[:,0]
+                right = indata[:,1]
+                indata = (left+right)/2
+            pcm_in[pcm_in_pos:pcm_in_pos+len(indata)] = \
+                indata[:]
+            pcm_in_pos += len(indata)
+
+            # Copy output data
+            outdata = item["out"]
+            if outdata.shape[1] == 2:
+                # Convert to mono
+                left = outdata[:,0]
+                right = outdata[:,1]
+                outdata = (left+right)/2
+            pcm_out[pcm_out_pos:pcm_out_pos+len(outdata)] = \
+                outdata[:]
+            pcm_out_pos += len(outdata)
+
+        except KeyError:
+            # Don't have data, must be at the end
+            pass
+
+        
+        try:
+            assert item["end"] == True
+            
+            # Save as wave
+            def save_as_wave(pcm, filename):
+                print("Saving wav:", filename)
+
+                wave_file = wave.open(filename, "wb")
+                wave_file.setnchannels(1) # mono
+                wave_file.setsampwidth(2) # int16
+                wave_file.setframerate(48000) # FIXME
+                # Convert to int16
+                pcm = pcm * (2**15-1)
+                pcm = pcm.astype(numpy.int16)
+                wave_file.writeframes(pcm)
+                wave_file.close()
+
+            indata = pcm_in[:pcm_in_pos]
+            outdata = pcm_out[:pcm_out_pos]
+                
+            save_as_wave(indata,
+                         "in{:d}.wav".format(count))
+            save_as_wave(outdata,
+                         "out{:d}.wav".format(count))
+
+            cor = signal.correlate(outdata, indata)
+            correction = len(indata) - numpy.argmax(cor)
+            external_delta = correction/samples_per_second
+            print("internal (ms):",round(internal_delta*1000))
+            print("external (ms):",round(external_delta*1000))
+            print("latency (ms):",round((internal_delta+external_delta)*1000))
+            
+        except KeyError:
+            # We aren't at the end
+            pass
+              
 
 # Phase One
 # =========
@@ -23,14 +122,15 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
     # Class to describe the current state of the process
     class ProcessState(Enum):
         RESET = 0
-        START_TONE0 = 5
-        DETECT_TONE0 = 10
-        START_TONE0_TONE1 = 15
-        DETECT_TONE0_TONE1 = 20
-        CLEANUP = 25
-        COMPLETING = 30
-        COMPLETED = 40
-        ABORTED = 50
+        DETECT_SILENCE_START = 10
+        START_TONE = 20
+        DETECT_TONE = 30
+        STOP_TONE = 35
+        DETECT_SILENCE_END = 40
+        CLEANUP = 50
+        COMPLETING = 60
+        COMPLETED = 70
+        ABORTED = 80
 
     # Create a class to hold the shared variables
     class SharedVariables:
@@ -49,6 +149,9 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
 
             # Queue to save output data for debugging
             self.q = queue.Queue()
+
+            # Queues for off-thread processing
+            self.q_process = queue.Queue()
 
             # Store samples per second parameter
             self.samples_per_second = samples_per_second
@@ -76,31 +179,65 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
             # Variable to record when we entered the current state
             self.state_start_time = None
 
-            # Variables for tones
-            self.tone_duration = 1 # second
-            n_tones = len(self.fft_analyser.freqs)
-            self.tones = [Tone(freq,
-                               self.samples_per_second,
-                               channels = output_channels,
-                               max_level = 1/n_tones,
-                               duration = self.tone_duration)
-                          for freq in self.fft_analyser.freqs]
+            # Variables for tone
+            assert self.fft_analyser.n_freqs == 1
+            tone_duration = 1 # second
+            self.tone = Tone(self.fft_analyser.freqs[0],
+                             self.samples_per_second,
+                             channels = output_channels,
+                             max_level = 1,
+                             duration = tone_duration)
 
             # Variables for levels
+            self.silence_mean = levels["silence_mean"]
+            self.silence_sd = levels["silence_sd"]
             self.tone0_mean = levels["tone0_mean"]
             self.tone0_sd = levels["tone0_sd"]
             self.tone0_tone1_mean = levels["tone0_tone1_mean"]
             self.tone0_tone1_sd = levels["tone0_tone1_sd"]
 
+            # Variables for DETECT_SILENCE_START
+            self.detect_silence_start_threshold = (
+                (self.tone0_mean[0] + self.silence_mean[0]) / 2
+            )
+            self.detect_silence_start_duration = 100/1000 # seconds
+            self.detect_silence_start_start_time = None
+            self.detect_silence_start_detected = False
+
+            # Variables for START_TONE
+            self.start_tone_fadein_duration = 20/1000 # seconds
+            
+            # Variables for DETECT_TONE
+            self.detect_tone_threshold = (
+                (self.tone0_mean[0] + self.silence_mean[0]) / 2
+            )
+            self.detect_tone_start_detect_time = None
+            self.detect_tone_threshold_duration = 50/1000 # seconds
+            self.detect_tone_detected = False
+            self.detect_tone_max_time_in_state = 5 # seconds
+
+            # Variables for STOP_TONE
+            self.stop_tone_fadeout_duration = 20/1000 # seconds
+            
+            # Variables for DETECT_SILENCE_END
+            self.detect_silence_end_threshold = (
+                (self.tone0_mean[0] + self.silence_mean[0]) / 2
+            )
+            self.detect_silence_end_duration = 100/1000 # seconds
+            self.detect_silence_end_start_time = None
+            self.detect_silence_end_detected = False
+
+            # Variables for CLEANUP
+            self.cleanup_cycles = 0
+            self.cleanup_cycles_threshold = 3
+            
+            # =======
+
             # Variables for START_TONE0
             self.start_tone0_start_play_time = None
 
             # Variables for DETECT_TONE0            
-            self.detect_tone0_start_detect_time = None
             self.detect_tone0_threshold_num_sd = 4
-            self.detect_tone0_threshold_duration = 0.05 # seconds
-            self.detect_tone0_max_time_in_state = 5 # seconds
-            self.detect_tone0_detected = False
             
             # Variables for START_TONE0_TONE1
             self.start_tone0_tone1_start_play_time = None
@@ -112,14 +249,6 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
             self.detect_tone0_tone1_threshold_duration = 50/1000 # seconds
             self.detect_tone0_tone1_max_time_in_state = 5 # seconds
             self.detect_tone0_tone1_detected = False
-
-            # Variables for CLEANUP
-            self.cleanup_cycles = 0
-            self.cleanup_cycles_threshold = 3
-            self.cleanup_fadeout_duration = 5/1000 # seconds
-
-            # Variables for COMPLETING
-            self.completing_fadeout_duration = 50/1000 # seconds
             
     # Create an instance of the shared variables
     v = SharedVariables(samples_per_second)
@@ -176,40 +305,37 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
         previous_state = v.process_state
 
         if v.process_state == ProcessState.RESET:
-            v.process_state = ProcessState.START_TONE0
+            v.process_state = ProcessState.DETECT_SILENCE_START
 
-        elif v.process_state == ProcessState.START_TONE0:
-            v.process_state = ProcessState.DETECT_TONE0
+        elif v.process_state == ProcessState.DETECT_SILENCE_START:
+            if v.detect_silence_start_detected:
+                v.process_state = ProcessState.START_TONE
             
-        elif v.process_state == ProcessState.DETECT_TONE0:
-            if v.detect_tone0_detected:
-                v.process_state = ProcessState.START_TONE0_TONE1
+        elif v.process_state == ProcessState.START_TONE:
+            v.process_state = ProcessState.DETECT_TONE
             
-            if time.currentTime - v.state_start_time > v.detect_tone0_max_time_in_state:
-                print("ERROR: We've spent too long listening for tone #0.  Aborting.")
+        elif v.process_state == ProcessState.DETECT_TONE:
+            if v.detect_tone_detected:
+                v.process_state = ProcessState.STOP_TONE
+            
+            if time.currentTime - v.state_start_time > v.detect_tone_max_time_in_state:
+                print("ERROR: We've spent too long listening for tone.  Aborting.")
                 v.process_state = ProcessState.ABORTED
 
-        elif v.process_state == ProcessState.START_TONE0_TONE1:
-            v.process_state = ProcessState.DETECT_TONE0_TONE1
-            
-        elif v.process_state == ProcessState.DETECT_TONE0_TONE1:
-            if v.detect_tone0_tone1_detected:
+        elif v.process_state == ProcessState.STOP_TONE:
+            v.process_state = ProcessState.DETECT_SILENCE_END
+
+        elif v.process_state == ProcessState.DETECT_SILENCE_END:
+            if v.detect_silence_end_detected:
                 v.process_state = ProcessState.CLEANUP
-            
-            if time.currentTime - v.state_start_time > v.detect_tone0_tone1_max_time_in_state:
-                print("ERROR: We've spent too long listening for tone #0.  Aborting.")
-                v.process_state = ProcessState.ABORTED
-
-        elif v.process_state == ProcessState.CLEANUP:
-            if v.cleanup_cycles > v.cleanup_cycles_threshold:
-                v.process_state = ProcessState.COMPLETING
-            else:
-                v.process_state = ProcessState.START_TONE0
-                
-        elif v.process_state == ProcessState.COMPLETING:
-            if v.tones[0].inactive and v.tones[1].inactive:
-                v.process_state = ProcessState.COMPLETED
         
+        elif v.process_state == ProcessState.CLEANUP:
+            if v.tone.inactive:
+                if v.cleanup_cycles >= v.cleanup_cycles_threshold:
+                    v.process_state = ProcessState.COMPLETED
+                else:
+                    v.process_state = ProcessState.DETECT_SILENCE_START
+                        
         elif v.process_state == ProcessState.COMPLETED:
             pass
         
@@ -227,144 +353,158 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
 
         if v.process_state == ProcessState.RESET:
             # Ensure tone #0 is stopped
-            v.tones[0].stop()
-            v.tones[0].output(outdata)
-
-            # Ensure tone #1 is stopped
-            v.tones[1].stop()
-            v.tones[1].output(outdata)
+            v.tone.stop()
+            v.tone.output(outdata)
 
             
-        elif v.process_state == ProcessState.START_TONE0:
+        if v.process_state == ProcessState.DETECT_SILENCE_START:
+            # The tone was stopped in the previous state
+            v.tone.output(outdata)
+            
+            # Ensure that the levels are below the threshold
+            if tones_level is not None:
+                if tones_level[0] < v.detect_silence_start_threshold:
+                    if v.detect_silence_start_start_time is None:
+                        v.detect_silence_start_start_time = \
+                            time.inputBufferAdcTime
+                    else:
+                        duration = (
+                            time.inputBufferAdcTime
+                            - v.detect_silence_start_start_time
+                        )
+                        if duration >= v.detect_silence_start_duration:
+                            print("Silence detected")
+                            v.detect_silence_start_detected = True
+                else:
+                    # Restart the timer
+                    v.detect_silence_start_start_time = None
+            else:
+                print("tones_levels was None")
+
+            
+        elif v.process_state == ProcessState.START_TONE:
             # Play tone #0
-            v.tones[0].play()
-            v.tones[0].output(outdata)
+            v.tone.fadein(v.start_tone_fadein_duration)
+            v.tone.output(outdata)
             
             # Start the timer from the moment the system says it will
             # play the audio.
             v.start_tone0_start_play_time = time.outputBufferDacTime
 
+            # Send the data for off-thread analysis
+            v.q_process.put_nowait(
+                {"start": True,
+                 "out": outdata.copy(),
+                 "out_time": v.start_tone0_start_play_time,
+                 "in": indata.copy(),
+                 "in_time": time.inputBufferAdcTime
+                }
+            )
+
             
-        elif v.process_state == ProcessState.DETECT_TONE0:
-            # Play tone #0
-            v.tones[0].play()
-            v.tones[0].output(outdata)
+        elif v.process_state == ProcessState.DETECT_TONE:
+            # Output tone, which is be playing
+            v.tone.output(outdata)
 
             if tones_level is not None:
-                # Are we hearing the tone?  Ensure we're within an
-                # acceptable number of standard deviations from the mean.
-                num_sd = abs((tones_level - v.tone0_mean) / v.tone0_sd)
-
-                # FIXME: How should I compare two normal distributions?
-                if all(num_sd < v.detect_tone0_threshold_num_sd):
-                    if v.detect_tone0_start_detect_time is None:
-                        v.detect_tone0_start_detect_time = time.inputBufferAdcTime
+                # Are we hearing the tone?
+                if tones_level[0] > v.detect_tone_threshold:
+                    if v.detect_tone_start_detect_time is None:
+                        print("Starting timer")
+                        v.detect_tone_start_detect_time = time.inputBufferAdcTime
                     else:
-                        detect_duration = time.inputBufferAdcTime - v.detect_tone0_start_detect_time
-                        if detect_duration > v.detect_tone0_threshold_duration:
-                            print("Tone0 detected")
-                            v.detect_tone0_detected = True
-
-                            # Calculate latency to the moment the
-                            # system says it recorded the audio.
-                            latency = (
-                                v.detect_tone0_start_detect_time
-                                - v.start_tone0_start_play_time
-                                - v.fft_analyser.window_width
-                            )
-                            print("Latency: ",round(latency*1000), "ms")
-                            
+                        detect_duration = time.inputBufferAdcTime - v.detect_tone_start_detect_time
+                        if detect_duration > v.detect_tone_threshold_duration:
+                            print("Tone detected")
+                            v.detect_tone_detected = True
                 else:
                     # Reset timer
-                    v.detect_tone0_start_detect_time = None
+                    v.detect_tone_start_detect_time = None
             else:
                 print("tones_levels was None")
+
+            # Send the data for off-thread analysis
+            v.q_process.put_nowait(
+                {"out": outdata.copy(),
+                 "out_time": v.start_tone0_start_play_time,
+                 "in": indata.copy(),
+                 "in_time": time.inputBufferAdcTime
+                }
+            )
 
                 
-        elif v.process_state == ProcessState.START_TONE0_TONE1:
-            # Play tone #0 as it should be on in the background
-            v.tones[0].play()
-            v.tones[0].output(outdata)
+        elif v.process_state == ProcessState.STOP_TONE:
+            # Fadeout tone
+            v.tone.fadeout(v.stop_tone_fadeout_duration)
+            v.tone.output(outdata)
 
-            # Start playing tone #1
-            v.tones[1].fadein(v.start_tone0_tone1_fadein_duration)
-            v.tones[1].output(outdata, operator.iadd)
+            # Send the data for off-thread analysis
+            v.q_process.put_nowait(
+                {"out": outdata.copy(),
+                 "out_time": v.start_tone0_start_play_time,
+                 "in": indata.copy(),
+                 "in_time": time.inputBufferAdcTime
+                }
+            )
             
-            # Start the timer from the moment the system says it will
-            # play the audio.
-            v.start_tone0_tone1_start_play_time = time.outputBufferDacTime
-
+        elif v.process_state == ProcessState.DETECT_SILENCE_END:
+            # The tone was stopped in the previous state
+            v.tone.output(outdata)
             
-        elif v.process_state == ProcessState.DETECT_TONE0_TONE1:
-            # Play both tones
-            v.tones[0].output(outdata)
-            v.tones[1].output(outdata, op=operator.iadd)
-
+            # Ensure that the levels are below the threshold
             if tones_level is not None:
-                # Are we hearing the tone?  Ensure we're within an
-                # acceptable number of standard deviations from the mean.
-                num_sd = abs((tones_level - v.tone0_tone1_mean) / v.tone0_tone1_sd)
-                print(num_sd)
-
-                # FIXME: How should I compare two normal distributions?
-                if all(num_sd < v.detect_tone0_tone1_threshold_num_sd):
-                    if v.detect_tone0_tone1_start_detect_time is None:
-                        print("Detected")
-                        v.detect_tone0_tone1_start_detect_time = time.inputBufferAdcTime
+                if tones_level[0] < v.detect_silence_end_threshold:
+                    if v.detect_silence_end_start_time is None:
+                        v.detect_silence_end_start_time = \
+                            time.inputBufferAdcTime
                     else:
-                        detect_duration = time.inputBufferAdcTime - v.detect_tone0_tone1_start_detect_time
-                        if detect_duration > v.detect_tone0_tone1_threshold_duration:
-                            print("Tone0 and Tone1 detected")
-                            v.detect_tone0_tone1_detected = True
-
-                            # Calculate latency to the moment the
-                            # system says it recorded the audio.
-                            latency = (
-                                v.detect_tone0_tone1_start_detect_time
-                                - v.start_tone0_tone1_start_play_time
-                                - v.fft_analyser.window_width
-                            )
-                            print("Latency: ",round(latency*1000), "ms")
-                            
+                        duration = (
+                            time.inputBufferAdcTime
+                            - v.detect_silence_end_start_time
+                        )
+                        if duration >= v.detect_silence_end_duration:
+                            print("Silence detected")
+                            v.detect_silence_end_detected = True
                 else:
-                    # Reset timer
-                    print("Resetting")
-                    v.detect_tone0_tone1_start_detect_time = None
+                    # Restart the timer
+                    v.detect_silence_end_start_time = None
             else:
                 print("tones_levels was None")
 
+            # Send the data for off-thread analysis
+            v.q_process.put_nowait(
+                {"out": outdata.copy(),
+                 "out_time": v.start_tone0_start_play_time,
+                 "in": indata.copy(),
+                 "in_time": time.inputBufferAdcTime
+                }
+            )
+            
                 
         elif v.process_state == ProcessState.CLEANUP:
-            # Play tone #0 as it shouldn't shut down
-            v.tones[0].play()
-            v.tones[0].output(outdata)
+            # Keep outputting tone until it's inactive
+            v.tone.output(outdata)
 
-            # Shut down tone #1
-            v.tones[1].fadeout(v.cleanup_fadeout_duration)
-            v.tones[1].output(outdata, op=operator.iadd)
+            # Send the data for off-thread analysis
+            v.q_process.put_nowait(
+                {"end":True}
+            )
 
             # Reset key variables
-            v.detect_tone0_start_detect_time = None            
-            v.detect_tone0_detected = False
-            v.detect_tone0_tone1_start_detect_time = None            
-            v.detect_tone0_tone1_detected = False
+            v.detect_silence_start_start_time = None            
+            v.detect_silence_start_detected = False
+            v.detect_silence_end_start_time = None            
+            v.detect_silence_end_detected = False
+            v.detect_tone_start_detect_time = None            
+            v.detect_tone_detected = False
 
             # Increment the number of cleanup cycles
             v.cleanup_cycles += 1
             
-                
-        elif v.process_state == ProcessState.COMPLETING:
-            print("Completing")
-            v.tones[0].fadeout(v.completing_fadeout_duration) #FIXME
-            v.tones[0].output(outdata)
-
-            v.tones[1].fadeout(v.completing_fadeout_duration)
-            v.tones[1].output(outdata, op=operator.iadd)
-
 
         elif v.process_state == ProcessState.COMPLETED:
+            # Actively fill outdata with zeros
             outdata.fill(0)
-
             print("Completed phase one latency measurement")
             exception = sd.CallbackStop
 
@@ -373,7 +513,7 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
             # Actively fill outdata with zeros
             outdata.fill(0)
             print("Aborted phase one latency measurement")
-            raise sd.CallbackAbort
+            exception = sd.CallbackAbort
 
         
         # Store output
@@ -388,7 +528,6 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
 
     # Play first tone
     # Open a read-write stream
-    print("STREAM's Desired latency:", desired_latency)
     stream = sd.Stream(samplerate=samples_per_second,
                        channels=channels,
                        dtype=numpy.float32,
@@ -400,6 +539,10 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
     with stream:
         v.event.wait()  # Wait until measurement is finished
 
+
+    print("Processing collected samples...")
+    process_samples(v.q_process)
+        
     # Save output as wave file
     print("Writing wave file")
     wave_file = wave.open("out.wav", "wb")
@@ -460,4 +603,4 @@ if __name__ == "__main__":
 
     input() # wait for enter key
 
-    _measure_latency("high")
+    _measure_latency("low")
