@@ -28,6 +28,9 @@ def process_samples(q):
     pcm_out_pos = 0
 
     count = 0
+
+    # List for results of processing
+    latencies = []
            
     while True:
         try:
@@ -55,6 +58,13 @@ def process_samples(q):
                 left = indata[:,0]
                 right = indata[:,1]
                 indata = (left+right)/2
+            elif indata.shape[1] == 1:
+                # Source is mono
+                indata = indata[:,0]
+            else:
+                raise Exception("Unexpected number of input channels "+
+                                "({:d})".format(indata.shape[1]))
+            
             pcm_in[pcm_in_pos:pcm_in_pos+len(indata)] = \
                 indata[:]
             pcm_in_pos += len(indata)
@@ -66,6 +76,13 @@ def process_samples(q):
                 left = outdata[:,0]
                 right = outdata[:,1]
                 outdata = (left+right)/2
+            elif outdata.shape[1] == 1:
+                # Output is already mono
+                outdata = outdata[:,0]
+            else:
+                raise Exception("Unexpected number of output channels "+
+				"({:d})".format(indata.shape[1]))
+
             pcm_out[pcm_out_pos:pcm_out_pos+len(outdata)] = \
                 outdata[:]
             pcm_out_pos += len(outdata)
@@ -102,14 +119,21 @@ def process_samples(q):
 
             cor = signal.correlate(outdata, indata)
             correction = len(indata) - numpy.argmax(cor)
-            external_delta = correction/samples_per_second
+            external_delta = (
+                correction/samples_per_second
+                - internal_delta
+            )
+            latency = internal_delta+external_delta
+            latencies.append(latency)
             print("internal (ms):",round(internal_delta*1000))
             print("external (ms):",round(external_delta*1000))
-            print("latency (ms):",round((internal_delta+external_delta)*1000))
+            print("latency (ms):",round(latency*1000))
             
         except KeyError:
             # We aren't at the end
             pass
+
+    return latencies
               
 
 # Phase One
@@ -532,7 +556,7 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
     # Play first tone
     # Open a read-write stream
     stream = sd.Stream(samplerate=samples_per_second,
-                       channels=channels,
+                       #channels=channels, #FIXME
                        dtype=numpy.float32,
                        latency=desired_latency,
                        callback=callback,
@@ -544,7 +568,7 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
 
 
     print("Processing collected samples...")
-    process_samples(v.q_process)
+    latencies = process_samples(v.q_process)
         
     # Save output as wave file
     print("Writing wave file")
@@ -564,7 +588,9 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
 
         
     # Done!
-    print("Finished.")
+    print("Finished measurement of latency.")
+
+    return latencies
 
 
         
@@ -572,7 +598,9 @@ def _measure_latency(desired_latency="high"):
     print("Desired latency:", desired_latency)
     levels = measure_levels(desired_latency)
     print("\n")
-    approximate_latency = measure_latency_phase_one(levels, desired_latency)
+    latencies = measure_latency_phase_one(levels, desired_latency)
+
+    return numpy.mean(latencies)
     
     
 
@@ -606,4 +634,4 @@ if __name__ == "__main__":
 
     input() # wait for enter key
 
-    _measure_latency("low")
+    _measure_latency("high")
