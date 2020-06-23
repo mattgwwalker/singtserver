@@ -44,7 +44,7 @@ class FrameBuffer:
 
         # Clear the old data
         channels = self.__buffer.shape[1]
-        self.__buffer[0:samples] = [[0]*channels] * samples
+        self.__buffer[0:samples].fill(0)
 
         # Roll the buffer so that the first uncopied sample is at
         # location 0.
