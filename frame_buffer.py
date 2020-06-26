@@ -4,59 +4,62 @@ import numpy
 class FrameBuffer:
     def __init__(self, number_of_samples, channels, dtype=numpy.float32):
         # Store the data type
-        self.__dtype = dtype
+        self._dtype = dtype
         
         # Create a buffer of the desired size, filled with zeros
-        self.__buffer = numpy.zeros(
+        self._buffer = numpy.zeros(
             (number_of_samples, channels),
-            dtype=self.__dtype
+            dtype=self._dtype
         )
 
         # Position in buffer from which data can be appended
-        self.__pos = 0
+        self._pos = 0
 
         
     def size(self):
         """Returns the size of the buffer."""
-        return self.__pos
+        return self._pos
 
         
     def put(self, data):
+        # Check that the number of channels matches
+        assert data.shape[1] == self._buffer.shape[1]
+        
         # Check that there's sufficient space
-        assert self.__pos + len(data) <= len(self.__buffer)
+        assert self._pos + len(data) <= len(self._buffer)
         
         # Copy the data
-        self.__buffer[self.__pos : self.__pos+len(data)] = data[:]
+        self._buffer[self._pos : self._pos+len(data)] = data[:]
 
         # Adjust the position
-        self.__pos += len(data)
+        self._pos += len(data)
 
         
     def get(self, samples):
         """ Returns the frame_size data from the buffer. """
         # TODO: Is this the most efficient approach?
         frame = numpy.zeros(
-            (samples,self.__buffer.shape[1]),
-            dtype=self.__dtype
+            (samples,self._buffer.shape[1]),
+            dtype=self._dtype
         )
 
-        frame[:] = self.__buffer[0:samples]
+        frame[:] = self._buffer[0:samples]
 
         # Clear the old data
-        channels = self.__buffer.shape[1]
-        self.__buffer[0:samples].fill(0)
+        channels = self._buffer.shape[1]
+        self._buffer[0:samples].fill(0)
 
         # Roll the buffer so that the first uncopied sample is at
         # location 0.
-        self.__buffer = numpy.roll(
-            self.__buffer,
+        self._buffer = numpy.roll(
+            self._buffer,
             -samples,
             axis=0
         )
 
         # Adjust the position for new data
-        self.__pos -= samples
-        if self.__pos < 0:
-            self.__pos = 0
+        self._pos -= samples
+        if self._pos < 0:
+            self._pos = 0
 
         return frame
