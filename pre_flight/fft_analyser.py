@@ -3,15 +3,26 @@ import numpy
 # Fast Fourier Transform for recorded samples, specifically focused on
 # certain frequencies.
 class FFTAnalyser:
-    def __init__(self, samples_per_second):
-        # Number of samples for FFT analysis.  256 samples is
-        # approximately 5ms at 48kHz.
-        self._n = 256
+    def __init__(self, samples_per_second=48000, n=256, freqs=[375]):
+        # Length of samples to analyse
+        self._n = n
 
+        # Samples per second
         self._samples_per_second = samples_per_second
 
+        # Get sample frequencies for specified sample size and number
+        # of samples per second
         fft_freqs = numpy.fft.rfftfreq(self._n) * samples_per_second
-        self._freq_indices = [2, 5]
+
+        # Find the indicies of the desired frequencies
+        epsilon = 1e-6 # some small value to allow for numerical error
+        self._freq_indices = []
+        for freq in freqs:
+            indices = numpy.where(fft_freqs == freq)[0]
+            assert len(indices) == 1
+            self._freq_indices.append(indices[0])
+
+        # Store freqencies
         self._freqs = [fft_freqs[i] for i in self._freq_indices]
 
         print("FFT analysis configured for frequencies (Hz):", self._freqs)
