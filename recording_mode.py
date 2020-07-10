@@ -11,105 +11,151 @@ import threading
 import opus_helpers
 from frame_buffer import FrameBuffer
 import queue
+import time as t # for debugging
+import wave
 
 q = queue.Queue(maxsize=-1)
+q2 = queue.Queue(maxsize=-1) # FIXME: This is a debug queue for testing
 
 
 class RecordingMode:
     def __init__(self):
         # Create re-entrant lock so that we threadsafe
-        self.__lock = threading.RLock();
+        self._lock = threading.RLock();
 
         # Grab the lock immediately
-        with self.__lock:
-            self.__samples_per_second = 48000
-            self.__silence_duration_after = 60 # ms
-            self.__starting_sound_filename = "sounds/starting.opus"
-            self.__playback_level = 0.5
-            self.__monitoring_level = 0.5
+        with self._lock:
+            self._samples_per_second = 48000
+            self._silence_duration_after = 60 # ms
+            self._starting_sound_filename = "sounds/starting.opus"
+            self._playback_level = 0.5
+            self._monitoring_level = 0.5
 
             # Open the starting sound file and store it as PCM buffer
-            opus_file = pyogg.OpusFile(self.__starting_sound_filename)
-            self.__starting_sound_pcm = opus_file.as_array()
-            self.__starting_sound_pcm = self.__starting_sound_pcm.astype(numpy.float32) / (2**15)
+            opus_file = pyogg.OpusFile(self._starting_sound_filename)
+            self._starting_sound_pcm = opus_file.as_array()
+            self._starting_sound_pcm = self._starting_sound_pcm.astype(numpy.float32) / (2**15)
 
 
             
     @property
-    def __monitoring_level(self):
-        return 1 - self.__playback_level
+    def _monitoring_level(self):
+        return 1 - self._playback_level
 
     
-    @__monitoring_level.setter
-    def __monitoring_level(self, new_value):
+    @_monitoring_level.setter
+    def _monitoring_level(self, new_value):
         if new_value > 1:
             new_value = 1
         if new_value < 0:
             new_value = 0
-        self.__playback_level = 1 - new_value
+        self._playback_level = 1 - new_value
+
+
+    def set_latency_adjustment(self, latency):
+        self._latency = latency
 
         
     def prepare(self, backing_track_filename):
         # Grab the lock so that we're threadsafe
-        with self.__lock:
+        with self._lock:
             # Open the backing track and store it as PCM buffer
             opus_file = pyogg.OpusFile(backing_track_filename)
-            self.__backing_track_pcm = opus_file.as_array()
-            self.__backing_track_pcm = self.__backing_track_pcm.astype(numpy.float32) / (2**15)
+            self._backing_track_pcm = opus_file.as_array()
+            self._backing_track_pcm = self._backing_track_pcm.astype(numpy.float32) / (2**15)
 
             # Create an encoder
-            self.__encoder = opus_helpers.create_encoder(
-                self.__backing_track_pcm,
-                self.__samples_per_second
+            self._encoder = opus_helpers.create_encoder(
+                self._backing_track_pcm,
+                self._samples_per_second
             )
 
             
     def record(self):
         # Define the stream's callback
+        count = 0 # DEBUG
+        last_inputBufferAdcTime = None
+        
         def callback(indata, outdata, samples, time, status):
             nonlocal step_no, current_pos, stream, warmup_samples
             nonlocal samples_per_frame
-            
+            nonlocal count
+            nonlocal frame_buffer
+            nonlocal last_inputBufferAdcTime
+
+            start_time = t.time()
+
+            # internal_latency = (time.outputBufferDacTime
+            #                     - time.inputBufferAdcTime)
+            # print("internal latency:", internal_latency,
+            #       "samples:", samples)
+
+            # if last_inputBufferAdcTime is not None:
+            #     print("time diff:", time.inputBufferAdcTime - last_inputBufferAdcTime)
+            # last_inputBufferAdcTime = time.inputBufferAdcTime
             
             if status:
                 print(status)
-                
+
+            count += 1
+            
             # Grab the lock so that we're threadsafe
-            with self.__lock:
+            with self._lock:
                 # TODO: Need to add monitoring
                 inx = []
                 inx[:] = indata[:] 
 
-                
                 # Step No 0
                 # =========
                 if step_no == 0:
+
+                    if status.input_underflow:
+                        print("INPUT UNDERFLOW: Not a problem as we're just writing out.  Count:",count)
+                    elif status.input_overflow:
+                        print("INPUT OVERFLOW: Not a problem as we're just writing out. Count:",count)
+                    elif status:
+                        print(status)
+                        print("count: ",count)
+                        print("ABORTING")
+                        raise sd.CallbackAbort
+
+
+                    # If the number of output channels does not match
+                    # out starting sound's PCM, we'll need to adjust
+                    # it.
+                    if outdata.shape[1] != self._starting_sound_pcm.shape[1]:
+                        # Number of channels does not match
+                        print("Number of channels does not match")
+
                     # Copy the starting sound to the output
-                    remaining = len(self.__starting_sound_pcm) - current_pos
+                    remaining = len(self._starting_sound_pcm) - current_pos
                     if remaining >= samples:
-                        outdata[:] = self.__starting_sound_pcm[
+                        outdata[:] = self._starting_sound_pcm[
                             current_pos : current_pos+samples
                         ]
                     else:
                         # Copy what's left of the starting sound, and fill
                         # the rest with silence
-                        outdata[:remaining] = self.__starting_sound_pcm[
-                            current_pos : len(self.__starting_sound_pcm)
+                        outdata[:remaining] = self._starting_sound_pcm[
+                            current_pos : len(self._starting_sound_pcm)
                         ]
                         outdata[remaining:samples] = [[0.0, 0.0]] * (samples-remaining)
 
                     # Adjust the starting sound position
                     current_pos += samples
 
-                    if current_pos >= len(self.__starting_sound_pcm):
+                    if current_pos >= len(self._starting_sound_pcm):
                         print("Finished playing starting sound; moving to next step")
-                        step_no += 1
+                        step_no = 2#+= 1 FIXME
                         current_pos = 0
 
                         
                 # Step No 1
                 # =========
                 elif step_no == 1:
+                    if status:
+                        print(status, "in step #1; ignoring")
+                    
                     # Play silence
                     outdata[:] = [[0.0, 0.0]] * samples
                     current_pos += samples
@@ -131,39 +177,63 @@ class RecordingMode:
                 # Step No 2
                 # =========
                 elif step_no == 2:
+                    if status:
+                        print(status, "in step #2; aborting")
+                        print("count: ",count)
+                        print("ABORTING")
+                        raise sd.CallbackAbort
+
+                    
                     # Play backing track and record voice
                     # Copy the backing track to the output
-                    remaining = len(self.__backing_track_pcm) - current_pos
+                    remaining = len(self._backing_track_pcm) - current_pos
                     if remaining >= samples:
-                        outdata[:] = self.__backing_track_pcm[
+                        outdata[:] = self._backing_track_pcm[
                             current_pos : current_pos+samples
                         ]
                     else:
                         # Copy what's left of the backing track, and fill
                         # the rest with silence
-                        outdata[:remaining] = self.__backing_track_pcm[
-                            current_pos : len(self.__backing_track_pcm)
+                        outdata[:remaining] = self._backing_track_pcm[
+                            current_pos : len(self._backing_track_pcm)
                         ]
                         outdata[remaining:samples] = [[0.0, 0.0]] * (samples-remaining)
-
+                        
                     # Adjust the position
                     current_pos += samples
 
+
+                    # DEBUG send outdata to q2
+                    q2.put_nowait(outdata.copy())
+                    
                     # Record the microphone
                     frame_buffer.put(indata)
-                    if frame_buffer.size() >= samples_per_frame:
-                        # Pass the complete frame to another thread for processing
-                        q.put(frame_buffer.get(samples_per_frame))
-                        
-                    if current_pos >= len(self.__backing_track_pcm):
+
+                    # DEBUG send the microphone data straight to the queue
+                    #q.put_nowait(indata.copy())
+
+                    while frame_buffer.size() >= samples_per_frame:
+                        # Pass complete frames to another thread for processing
+                        frame = frame_buffer.get(samples_per_frame)
+                        q.put_nowait(frame)
+
+                    if current_pos >= len(self._backing_track_pcm):
                         print("Finished playing backing track; moving to next step")
                         step_no += 1
                         current_pos = 0
+                        
+                    end_time = t.time()
+                    duration = end_time - start_time
+                    if duration > 2/1000:
+                        print("    thread call duration at end of step 2(ms):", round(duration*1000, 2))
 
                         
                 # Step No 3
                 # =========
                 elif step_no == 3:
+                    if status:
+                        print(status, "in step #3; ignoring")
+                        
                     # Play one frame's worth of silence, just to
                     # ensure we can keep the frame size constant.
                     outdata[:] = [[0.0, 0.0]] * samples
@@ -189,6 +259,12 @@ class RecordingMode:
             if stream.cpu_load > 0.2:
                 print("CPU Load above 20% during playback")
 
+            end_time = t.time()
+            duration = end_time - start_time
+            if duration > 2/1000:
+                print("    thread call duration (ms):", round(duration*1000, 2))
+
+
 
         # Step number indicates where we are in the recording process
         # 0: play starting sound
@@ -205,7 +281,7 @@ class RecordingMode:
         # Obtain the algorithmic delay of the Opus encoder
         delay = opus.opus_int32()
         result = opus.opus_encoder_ctl(
-            self.__encoder,
+            self._encoder,
             opus.OPUS_GET_LOOKAHEAD_REQUEST,
             ctypes.pointer(delay)
         )
@@ -223,7 +299,7 @@ class RecordingMode:
         samples_per_frame = 960
         channels = 2
         frame_buffer = FrameBuffer(
-            2*samples_per_frame,
+            48000, # one second FIXME
             channels
         )
 
@@ -236,9 +312,9 @@ class RecordingMode:
         print("Creating stream")
         stream = sd.Stream(
             samplerate=48000,
-            channels=channels,
+            #channels=channels,
             dtype=numpy.float32,
-            latency="low",
+            latency=100/1000, #"high",
             callback=callback,
             finished_callback=finished.set
         )
@@ -247,11 +323,11 @@ class RecordingMode:
             finished.wait()  # Wait until playback is finished
 
         # Store the final number of pre-skip warmup samples
-        self.__pre_skip = warmup_samples
+        self._pre_skip = warmup_samples
         
 
 
-    def write(self, output_filename):
+    def write_opus(self, output_filename):
         # Go through the frames and save them as an OggOpus file
 
         # Create a new stream state with a random serial number
@@ -295,7 +371,7 @@ class RecordingMode:
         
         # Specify the identification header
         id_header = opus.make_identification_header(
-            pre_skip = self.__pre_skip
+            pre_skip = self._pre_skip
         )
 
         # Specify the packet containing the identification header
@@ -344,7 +420,7 @@ class RecordingMode:
         while ogg.ogg_stream_flush(ctypes.pointer(stream_state),
                                    ctypes.pointer(ogg_page)) != 0:
             # Write page
-            print("Writing page")
+            print("Writing header page")
             f.write(bytes(ogg_page.header[0:ogg_page.header_len]))
             f.write(bytes(ogg_page.body[0:ogg_page.body_len]))
 
@@ -371,15 +447,15 @@ class RecordingMode:
             assert len(frame_pcm) == samples_per_frame
 
             # Encode the audio
-            print("Encoding audio")
+            #print("Encoding audio")
             num_bytes = opus.opus_encode(
-                self.__encoder,
+                self._encoder,
                 ctypes.cast(source_ptr, ctypes.POINTER(opus.opus_int16)),
                 samples_per_frame,
                 encoded_frame_ptr,
                 max_bytes_in_encoded_frame
             )
-            print("num_bytes: ", num_bytes)
+            #print("num_bytes: ", num_bytes)
 
             # Check for any errors during encoding
             if num_bytes < 0:
@@ -424,21 +500,109 @@ class RecordingMode:
                 f.write(bytes(ogg_page.header[0:ogg_page.header_len]))
                 f.write(bytes(ogg_page.body[0:ogg_page.body_len]))
 
+                
+        # Force the writing of the final page
+        while ogg.ogg_stream_flush(ctypes.pointer(stream_state),
+                                   ctypes.pointer(ogg_page)) != 0:
+            # Write page
+            print("Writing final page")
+            f.write(bytes(ogg_page.header[0:ogg_page.header_len]))
+            f.write(bytes(ogg_page.body[0:ogg_page.body_len]))
+
+                
+        # Make sure the queue is empty
+        if not q.empty():
+            print("WARNING: Failed to completely process all the recorded frames")
+        
         # Finished
         f.close()
         print("Finished writing file")
 
 
+    def write_wave(self, filename):
+        print("Saving wav:", filename)
+
+        wave_file = wave.open(filename, "wb")
+        wave_file.setnchannels(2) # FIXME
+        wave_file.setsampwidth(2) # int16
+        wave_file.setframerate(48000) # FIXME
+
+
+        filename2="non-adjusted-"+filename
+        print("Saving wav:", filename2)
+
+        wave_file2 = wave.open(filename2, "wb")
+        wave_file2.setnchannels(2) # FIXME
+        wave_file2.setsampwidth(2) # int16
+        wave_file2.setframerate(48000) # FIXME
+
+        
+        # Calculate the number of samples to drop for the latency
+        # adjustment
+        latency_samples = int(self._latency * 48000)
+        print("Dropping", latency_samples, "samples to adjust for latency")
+        
+        # Loop through queue
+        dropped_samples = 0
+        while not q.empty():
+            pcm = q.get_nowait()
+            # Convert to int16
+            pcm = pcm * (2**15-1)
+            pcm = pcm.astype(numpy.int16)
+            wave_file2.writeframes(pcm)
+            
+            samples_remaining_to_drop = latency_samples - dropped_samples
+            if samples_remaining_to_drop > 0:
+                if samples_remaining_to_drop >= len(pcm):
+                    # drop this whole frame
+                    dropped_samples += len(pcm)
+                    continue
+                else:
+                    # drop part of this frame
+                    pcm = pcm[samples_remaining_to_drop:]
+                    dropped_samples += samples_remaining_to_drop
+            wave_file.writeframes(pcm)
+
+        wave_file.close()
+        wave_file2.close()
+
+
+
+        filename2 = "output-"+filename
+        print("Saving wav:", filename2)
+
+        wave_file = wave.open(filename2, "wb")
+        wave_file.setnchannels(2) # FIXME
+        wave_file.setsampwidth(2) # int16
+        wave_file.setframerate(48000) # FIXME
+        # Convert to int16
+
+        # Loop through queue
+        while not q2.empty():
+            pcm = q2.get_nowait()
+            pcm = pcm * (2**15-1)
+            pcm = pcm.astype(numpy.int16)
+            wave_file.writeframes(pcm)
+
+        wave_file.close()
+        
+            
+
+
 if __name__ == "__main__":
-    backing_track_filename = "left-right-demo-5s.opus"
-    output_filename = "recording.opus"
+    #backing_track_filename = "left-right-demo-5s.opus"
+    #backing_track_filename = "sounds/one-click.opus"
+    backing_track_filename = "sounds/rhythm.opus"
+    output_filename = "recording"
 
     rec = RecordingMode()
     print("Preparing...")
+    rec.set_latency_adjustment(210/1000) # FIXME
     rec.prepare(backing_track_filename)
     print("Recording...")
     rec.record()
     print("Writing...")
-    rec.write(output_filename)
+    rec.write_wave(output_filename+".wav")
+    #rec.write_opus(output_filename+".opus")
     
     print("Finished.")
