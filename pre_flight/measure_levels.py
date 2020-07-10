@@ -240,7 +240,7 @@ def measure_levels(desired_latency="high", samples_per_second=48000):
             previous_state = v.process_state
 
             if v.process_state == ProcessState.RESET:
-                v.process_state = ProcessState.MEASURE_SILENCE#WARMUP_STREAM
+                v.process_state = ProcessState.WARMUP_STREAM
 
             elif v.process_state == ProcessState.WARMUP_STREAM:
                 if v.warmup_stream_start_time is not None:
@@ -392,9 +392,10 @@ def measure_levels(desired_latency="high", samples_per_second=48000):
                     duration = time.currentTime - v.silence_start_time
                     if duration <= v.silence_threshold_duration:
                         # Record this level
+                        print("Recording a sample of the levels in silence")
                         v.silence_levels.append(tones_level)
                     elif len(v.silence_levels) < v.min_num_samples:
-                        print("Insufficient samples of silence observed; listening for another half-second")
+                        print("Insufficient samples of silence observed ({:d}); listening for another half-second".format(len(v.silence_levels)))
                         v.silence_threshold_duration += 0.5 # seconds
                     else:
                         # We've now collected enough sample levels;
@@ -738,7 +739,8 @@ if __name__ == "__main__":
     input() # wait for enter key
 
     levels = measure_levels(
-        desired_latency="high"
+        desired_latency = 100/1000
+        #desired_latency="high"
         #desired_latency="low"
     )
     print(levels)

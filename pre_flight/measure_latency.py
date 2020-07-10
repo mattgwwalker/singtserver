@@ -880,4 +880,4 @@ if __name__ == "__main__":
 
     input() # wait for enter key
 
-    measure_latency("low")
+    measure_latency(100/1000)
