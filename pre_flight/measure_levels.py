@@ -664,7 +664,7 @@ def measure_levels(desired_latency="high", samples_per_second=48000):
                        latency=desired_latency,
                        callback=callback,
                        finished_callback=v.event.set,
-                       never_drop_input=True)
+                       never_drop_input=False)
 
     # Share reference to stream with callback
     v.stream = stream
