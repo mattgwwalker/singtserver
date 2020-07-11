@@ -3,7 +3,16 @@ import numpy
 # Fast Fourier Transform for recorded samples, specifically focused on
 # certain frequencies.
 class FFTAnalyser:
-    def __init__(self, samples_per_second=48000, n=256, freqs=[375]):
+    def __init__(self,
+                 array,
+                 samples_per_second=48000,
+                 n=256,
+                 freqs=[375],
+                 initial_pos=0):
+        # Store array to process
+        self._pcm = array
+        self._pos = initial_pos
+        
         # Length of samples to analyse
         self._n = n
 
@@ -46,19 +55,24 @@ class FFTAnalyser:
         return self._n / self._samples_per_second
     
 
-    def run(self, rec_pcm, rec_position):
-        # If we have more than the required number of samples
-        # recorded, execute FFT analysis
-        if rec_position >= self._n:
+    def run(self, rec_position):
+        # While we have the required number of samples,
+        # execute FFT analysis
+        results = []
+        while self._pos + self._n <= rec_position:
+            # Calculate the positions for the next n items
+            start_pos = self._pos
+            end_pos = start_pos + self._n
+            
             # If we've got stereo data, average together the two
             # channels
-            channels = rec_pcm.shape[1]
+            channels = self._pcm.shape[1]
             if channels == 2:
-                left = rec_pcm[rec_position-self._n:rec_position, 0]
-                right = rec_pcm[rec_position-self._n:rec_position, 1]
+                left = self._pcm[start_pos:end_pos, 0]
+                right = self._pcm[start_pos:end_pos, 1]
                 mono = (left+right) / 2
             elif channels == 1:
-                mono = rec_pcm[rec_position-self._n:rec_position, 0]
+                mono = self._pcm[start_pos:end_pos, 0]
             else:
                 raise Exception(
                     "Attempted to analyse data with an unsupported "+
@@ -74,11 +88,20 @@ class FFTAnalyser:
             )
             y = numpy.abs(y)
 
-            return y[self._freq_indices]
-        
-        else:
-            # We don't have enough samples to analyse
-            return None
+            # Calculate mean and standard deviation of absolute PCM levels
+            abs_pcm = numpy.abs(mono)
+            abs_pcm_mean = numpy.mean(abs_pcm)
+
+            # Store the results
+            results.append({
+                "freq_levels":y[self._freq_indices],
+                "abs_pcm_mean":abs_pcm_mean
+            })
+
+            # Update the position of the last item that was processed
+            self._pos = end_pos
+
+        return results
     
 
         
