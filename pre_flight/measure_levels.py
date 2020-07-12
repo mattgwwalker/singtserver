@@ -50,9 +50,7 @@ def measure_levels(desired_latency="high", samples_per_second=48000):
         FADEIN_TONE0 = 20
         DETECT_TONE0 = 30
         MEASURE_TONE0 = 40
-        DETECT_TONE1 = 50
-        MEASURE_TONE0_TONE1 = 60
-        FADEOUT_TONE0_TONE1 = 61
+        FADEOUT_TONE0 = 50
         DETECT_SILENCE = 63
         MEASURE_SILENCE2 = 67
         COMPLETING = 70
@@ -263,9 +261,13 @@ def measure_levels(desired_latency="high", samples_per_second=48000):
             elif v.process_state == ProcessState.MEASURE_TONE0:
                 if v.tone0_mean is not None and \
                    v.tone0_sd is not None:
-                    v.process_state = ProcessState.DETECT_SILENCE
+                    v.process_state = ProcessState.FADEOUT_TONE0
 
                     
+            elif v.process_state == ProcessState.FADEOUT_TONE0:
+                v.process_state = ProcessState.DETECT_SILENCE
+
+
             elif v.process_state == ProcessState.DETECT_SILENCE:
                 if v.detect_silence_detected:
                     print("Moving to MEASURE_SILENCE2")
@@ -431,6 +433,14 @@ def measure_levels(desired_latency="high", samples_per_second=48000):
                         break
                 
 
+            elif v.process_state == ProcessState.FADEOUT_TONE0:
+                # Fadeout tone #0 over the length of the frame
+                fadeout_duration = samples / v.samples_per_second
+                print("FADING OUT TONE0 over {:f} seconds".format(fadeout_duration))
+                v.tones[0].fadeout(fadeout_duration)
+                v.tones[0].output(outdata)
+
+
             elif v.process_state == ProcessState.DETECT_SILENCE:
                 # Actively fill the output buffer
                 outdata.fill(0)
@@ -574,6 +584,7 @@ def measure_levels(desired_latency="high", samples_per_second=48000):
         raise Exception("Failed to detect levels of the different tones: "+v.error)
     
     # Done!
+    print("Signal to noise ratio:", round(v.tone0_abs_pcm_mean / v.silence_abs_pcm_mean, 1))
     print("Finished measuring levels.")
 
     return {
