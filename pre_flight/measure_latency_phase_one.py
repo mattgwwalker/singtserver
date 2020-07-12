@@ -181,7 +181,7 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
             self.samples_per_second = samples_per_second
         
             # Allocate space for recording
-            max_recording_duration = 2 # seconds
+            max_recording_duration = 10 # seconds
             max_recording_samples = (
                 max_recording_duration
                 * samples_per_second
@@ -198,7 +198,10 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
             self.process_state = ProcessState.RESET
 
             # Instance of the Fast Fourier Transform (FFT) analyser
-            self.fft_analyser = FFTAnalyser(samples_per_second)
+            self.fft_analyser = FFTAnalyser(
+                array=self.rec_pcm,
+                samples_per_second=samples_per_second
+            )
 
             # Variable to record when we entered the current state
             self.state_start_time = None
@@ -217,15 +220,13 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
             self.silence_sd = levels["silence_sd"]
             self.tone0_mean = levels["tone0_mean"]
             self.tone0_sd = levels["tone0_sd"]
-            self.tone0_tone1_mean = levels["tone0_tone1_mean"]
-            self.tone0_tone1_sd = levels["tone0_tone1_sd"]
 
             # Variables for DETECT_SILENCE_START
-            self.detect_silence_start_threshold = (
+            self.detect_silence_start_threshold_levels = (
                 (self.tone0_mean[0] + self.silence_mean[0]) / 2
             )
-            self.detect_silence_start_duration = 100/1000 # seconds
-            self.detect_silence_start_start_time = None
+            self.detect_silence_start_samples = 0
+            self.detect_silence_start_threshold_samples = 100 # samples
             self.detect_silence_start_detected = False
 
             # Variables for START_TONE
@@ -244,11 +245,11 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
             self.stop_tone_fadeout_duration = 20/1000 # seconds
             
             # Variables for DETECT_SILENCE_END
-            self.detect_silence_end_threshold = (
+            self.detect_silence_end_threshold_levels = (
                 (self.tone0_mean[0] + self.silence_mean[0]) / 2
             )
-            self.detect_silence_end_duration = 100/1000 # seconds
-            self.detect_silence_end_start_time = None
+            self.detect_silence_end_samples = 0
+            self.detect_silence_end_threshold_samples = 10
             self.detect_silence_end_detected = False
 
             # Variables for CLEANUP
@@ -278,18 +279,18 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
     v = SharedVariables(samples_per_second)
 
 
-    # Check that tone0 and tone0_tone1 are not overlapping in terms of
-    # the thresholds defined above.  We are only concerned with tone1
-    # and not-tone1 being mutually exclusive.
-    x = numpy.array([-1,1])
-    range_not_tone1 = v.tone0_mean[1] + x * v.tone0_sd[1]
-    range_tone1 = v.tone0_tone1_mean[1] + x * v.tone0_tone1_sd[1]
-    if min(range_not_tone1) < max(range_tone1) and \
-       min(range_tone1) < max(range_not_tone1):
-        print("range_not_tone1:", range_not_tone1)
-        print("range_tone1:", range_tone1)
-        raise Exception("ERROR: The expected ranges of the two tones overlap. "+
-                        "Try increasing the system volume and try again")
+    # # Check that tone0 and tone0_tone1 are not overlapping in terms of
+    # # the thresholds defined above.  We are only concerned with tone1
+    # # and not-tone1 being mutually exclusive.
+    # x = numpy.array([-1,1])
+    # range_not_tone1 = v.tone0_mean[1] + x * v.tone0_sd[1]
+    # range_tone1 = v.tone0_tone1_mean[1] + x * v.tone0_tone1_sd[1]
+    # if min(range_not_tone1) < max(range_tone1) and \
+    #    min(range_tone1) < max(range_not_tone1):
+    #     print("range_not_tone1:", range_not_tone1)
+    #     print("range_tone1:", range_tone1)
+    #     raise Exception("ERROR: The expected ranges of the two tones overlap. "+
+    #                     "Try increasing the system volume and try again")
         
     
             
@@ -310,17 +311,18 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
         # Analysis
         # ========
 
-        tones_level = v.fft_analyser.run(v.rec_pcm, v.rec_position)
+        assert v.rec_pcm is v.fft_analyser._pcm
+        analyses = v.fft_analyser.run(v.rec_position)
         #print(tones_level)
         
 
-        # Clear the first half second of the recording buffer if we've
-        # recorded more than one second
-        if v.rec_position > v.samples_per_second:
-            seconds_to_clear = 0.5 # seconds
-            samples_to_clear = int(seconds_to_clear * v.samples_per_second)
-            v.rec_pcm = numpy.roll(v.rec_pcm, -samples_to_clear, axis=0)
-            v.rec_position -= samples_to_clear
+        # # Clear the first half second of the recording buffer if we've
+        # # recorded more than one second
+        # if v.rec_position > v.samples_per_second:
+        #     seconds_to_clear = 0.5 # seconds
+        #     samples_to_clear = int(seconds_to_clear * v.samples_per_second)
+        #     v.rec_pcm = numpy.roll(v.rec_pcm, -samples_to_clear, axis=0)
+        #     v.rec_position -= samples_to_clear
 
         
         # Transitions
@@ -385,26 +387,23 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
         if v.process_state == ProcessState.DETECT_SILENCE_START:
             # The tone was stopped in the previous state
             v.tone.output(outdata)
-            
-            # Ensure that the levels are below the threshold
-            if tones_level is not None:
-                if tones_level[0] < v.detect_silence_start_threshold:
-                    if v.detect_silence_start_start_time is None:
-                        v.detect_silence_start_start_time = \
-                            time.inputBufferAdcTime
-                    else:
-                        duration = (
-                            time.inputBufferAdcTime
-                            - v.detect_silence_start_start_time
-                        )
-                        if duration >= v.detect_silence_start_duration:
-                            print("Silence detected")
+
+            for analysis in analyses:
+                tones_level = analysis["freq_levels"]
+                
+                # Ensure that the levels are below the threshold
+                if tones_level is not None:
+                    # Check if levels are below the silence threshold
+                    if tones_level[0] < v.detect_silence_start_threshold_levels:
+                        v.detect_silence_start_samples += 1
+                        if v.detect_silence_start_samples >= v.detect_silence_start_threshold_samples:
+                            #print("Silence detected")
                             v.detect_silence_start_detected = True
+                    else:
+                        # Restart the counter
+                        v.detect_silence_start_samples = 0
                 else:
-                    # Restart the timer
-                    v.detect_silence_start_start_time = None
-            else:
-                print("tones_levels was None")
+                    print("tones_levels was None")
 
             
         elif v.process_state == ProcessState.START_TONE:
@@ -431,24 +430,19 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
             # Output tone, which may or may not be active
             v.tone.output(outdata)
 
-            if tones_level is not None:
-                # Are we hearing the tone?
-                if tones_level[0] > v.detect_tone_threshold:
-                    print("Tone detected")
-                    v.detect_tone_detected = True
-                    # if v.detect_tone_start_detect_time is None:
-                    #     print("Starting timer")
-                    #     v.detect_tone_start_detect_time = time.inputBufferAdcTime
-                    # else:
-                    #     detect_duration = time.inputBufferAdcTime - v.detect_tone_start_detect_time
-                    #     if detect_duration > v.detect_tone_threshold_duration:
-                    #         print("Tone detected")
-                    #         v.detect_tone_detected = True
+            for analysis in analyses:
+                tones_level = analysis["freq_levels"]
+                
+                if tones_level is not None:
+                    # Are we hearing the tone?
+                    if tones_level[0] > v.detect_tone_threshold:
+                        #print("Tone detected")
+                        v.detect_tone_detected = True
+
+                        # No need to process the remaining samples
+                        break
                 else:
-                    # Reset timer
-                    v.detect_tone_start_detect_time = None
-            else:
-                print("tones_levels was None")
+                    print("tones_levels was None")
 
             # Send the data for off-thread analysis
             v.q_process.put_nowait(
@@ -477,26 +471,22 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
         elif v.process_state == ProcessState.DETECT_SILENCE_END:
             # The tone was stopped in the previous state
             v.tone.output(outdata)
-            
-            # Ensure that the levels are below the threshold
-            if tones_level is not None:
-                if tones_level[0] < v.detect_silence_end_threshold:
-                    if v.detect_silence_end_start_time is None:
-                        v.detect_silence_end_start_time = \
-                            time.inputBufferAdcTime
-                    else:
-                        duration = (
-                            time.inputBufferAdcTime
-                            - v.detect_silence_end_start_time
-                        )
-                        if duration >= v.detect_silence_end_duration:
-                            print("Silence detected")
+
+            for analysis in analyses:
+                tones_level = analysis["freq_levels"]
+                
+                # Ensure that the levels are below the threshold
+                if tones_level is not None:
+                    if tones_level[0] < v.detect_silence_end_threshold_levels:
+                        v.detect_silence_end_samples += 1
+                        if v.detect_silence_end_samples >= v.detect_silence_end_threshold_samples:
+                            #print("Silence detected")
                             v.detect_silence_end_detected = True
+                    else:
+                        # Restart the timer
+                        v.detect_silence_end_samples = 0
                 else:
-                    # Restart the timer
-                    v.detect_silence_end_start_time = None
-            else:
-                print("tones_levels was None")
+                    print("tones_levels was None")
 
             # Send the data for off-thread analysis
             v.q_process.put_nowait(
@@ -564,6 +554,7 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
 
     print("Measuring latency...")
     with stream:
+        print("Stated stream latency:", stream.latency)
         v.event.wait()  # Wait until measurement is finished
 
 
@@ -634,4 +625,7 @@ if __name__ == "__main__":
 
     input() # wait for enter key
 
-    _measure_latency("high")
+    _measure_latency(
+        desired_latency = 100/1000 # seconds
+        #desired_latency="high"
+    )
