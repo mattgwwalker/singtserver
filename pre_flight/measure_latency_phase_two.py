@@ -10,6 +10,7 @@ import operator
 import wave
 import queue
 from measure_levels import measure_levels
+from fft_analyser import FFTAnalyser
 from tone import Tone
 
 def process_click_data(q, detection_threshold):
@@ -81,7 +82,12 @@ def process_click_data(q, detection_threshold):
     print("Latency results (ms):")
     print(numpy.round(numpy.array(results, numpy.float32)*1000))
         
-
+    if len(results)>=2:
+        median = numpy.median(results)
+        return median
+    else:
+        print("Failed to accumulate sufficient results")
+        return None
         
             
 
@@ -129,12 +135,18 @@ def measure_latency_phase_two(levels, desired_latency="high", samples_per_second
             self.samples_per_second = samples_per_second
         
             # Allocate space for recording
-            max_recording_duration = 2 #seconds
+            max_recording_duration = 10 #seconds
             max_recording_samples = max_recording_duration * samples_per_second
             self.rec_pcm = numpy.zeros((
                 max_recording_samples,
                 input_channels
             ))
+
+            # Instance of the Fast Fourier Transform (FFT) analyser
+            self.fft_analyser = FFTAnalyser(
+                array=self.rec_pcm,
+                samples_per_second=samples_per_second
+            )
 
             # Tone to produce clicks
             self.tone = Tone(375)
@@ -157,8 +169,8 @@ def measure_latency_phase_two(levels, desired_latency="high", samples_per_second
             # Variables for detect silence
             self.detect_silence_detected = False
             self.detect_silence_threshold_num_sd = 5 # std. deviations
-            self.detect_silence_threshold_duration = 0.2 # seconds
-            self.detect_silence_start_detect_time = None
+            self.detect_silence_threshold_samples = 20
+            self.detect_silence_samples = 0 # samples
             
             # Variables for CLEANUP
             self.cleanup_cycles = 0
@@ -203,15 +215,23 @@ def measure_latency_phase_two(levels, desired_latency="high", samples_per_second
         v.rec_pcm[v.rec_position:v.rec_position+samples] = indata[:]
         v.rec_position += samples
         
-        # Clear the first half second of the recording buffer if we've
-        # recorded more than one second
-        if v.rec_position > v.samples_per_second:
-            seconds_to_clear = 0.5 # seconds
-            samples_to_clear = int(seconds_to_clear * v.samples_per_second)
-            v.rec_pcm = numpy.roll(v.rec_pcm, -samples_to_clear, axis=0)
-            v.rec_position -= samples_to_clear
+        # # Clear the first half second of the recording buffer if we've
+        # # recorded more than one second
+        # if v.rec_position > v.samples_per_second:
+        #     seconds_to_clear = 0.5 # seconds
+        #     samples_to_clear = int(seconds_to_clear * v.samples_per_second)
+        #     v.rec_pcm = numpy.roll(v.rec_pcm, -samples_to_clear, axis=0)
+        #     v.rec_position -= samples_to_clear
 
         
+        # Analysis
+        # ========
+
+        assert v.rec_pcm is v.fft_analyser._pcm
+        analyses = v.fft_analyser.run(v.rec_position)
+        #print(tones_level)
+        
+
         # Transitions
         # ===========
 
@@ -259,30 +279,22 @@ def measure_latency_phase_two(levels, desired_latency="high", samples_per_second
             # It's a requirement that outdata is always actively
             # filled
             outdata.fill(0)
+
+            for analysis in analyses:
+                abs_pcm_mean = analysis["abs_pcm_mean"]
             
-            # Are we hearing silence?  Ensure we're within an
-            # acceptable number of standard deviations from the mean.
-            abs_pcm = abs(indata)
-            num_sd = abs((abs_pcm - v.silence_abs_pcm_mean) / v.silence_abs_pcm_sd)
+                # Are we hearing silence?  Ensure we're within an
+                # acceptable number of standard deviations from the mean.
+                num_sd = abs((abs_pcm_mean - v.silence_abs_pcm_mean) / v.silence_abs_pcm_sd)
 
-            # Flatten the results in case we have more than one channel
-            num_sd = num_sd.reshape((indata.shape[0] * indata.shape[1],))
-
-            #print(num_sd)
-            if all(num_sd < v.detect_silence_threshold_num_sd):
-                if v.detect_silence_start_detect_time is None:
-                    v.detect_silence_start_detect_time = time.inputBufferAdcTime
-                else:
-                    detect_duration = (
-                        time.inputBufferAdcTime
-                        - v.detect_silence_start_detect_time
-                    )
-                    if detect_duration > v.detect_silence_threshold_duration:
-                        print("silence detected")
+                if num_sd < v.detect_silence_threshold_num_sd:
+                    v.detect_silence_samples += 1
+                    if v.detect_silence_samples > v.detect_silence_threshold_samples:
+                        #print("silence detected")
                         v.detect_silence_detected = True
-            else:
-                print("not silent; resetting")
-                v.detect_silence_start_detect_time = None
+                else:
+                    print("not silent; resetting")
+                    v.detect_silence_start_samples = 0
 
             
         elif v.process_state == ProcessState.PLAY_CLICK:
@@ -389,7 +401,7 @@ def measure_latency_phase_two(levels, desired_latency="high", samples_per_second
 
     print("Processing click data...")
     detection_threshold = (v.silence_abs_pcm_mean + v.tone0_abs_pcm_mean)/2
-    process_click_data(v.q_click, detection_threshold)
+    median_latency = process_click_data(v.q_click, detection_threshold)
         
     # Save output as wave file
     print("Writing output wave file")
@@ -428,7 +440,7 @@ def measure_latency_phase_two(levels, desired_latency="high", samples_per_second
         
     # Done!
     print("Finished.")
-
+    return median_latency
 
         
 def _measure_latency(desired_latency="high"):
@@ -469,4 +481,7 @@ if __name__ == "__main__":
 
     input() # wait for enter key
 
-    _measure_latency("high")
+    _measure_latency(
+        desired_latency=100/1000 # seconds
+        #desired_latency="high"
+    )

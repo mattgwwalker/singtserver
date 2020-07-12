@@ -480,7 +480,7 @@ def measure_latency_phase_one(levels, desired_latency="high", samples_per_second
                     if tones_level[0] < v.detect_silence_end_threshold_levels:
                         v.detect_silence_end_samples += 1
                         if v.detect_silence_end_samples >= v.detect_silence_end_threshold_samples:
-                            print("Silence detected")
+                            #print("Silence detected")
                             v.detect_silence_end_detected = True
                     else:
                         # Restart the timer
