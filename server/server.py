@@ -4,6 +4,7 @@ import os
 import struct
 from twisted.internet import protocol, reactor, endpoints
 from twisted.internet import defer
+from twisted.internet import task
 
 class Server(protocol.Protocol):
     class State:
@@ -47,7 +48,7 @@ class Server(protocol.Protocol):
                 self.transport.write(data)
                 yield bytes_read
 
-        print(list(send_file_in_parts(1000)))
+        task.cooperate(send_file_in_parts(1000))
 
         
         
