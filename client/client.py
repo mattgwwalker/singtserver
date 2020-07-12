@@ -1,3 +1,4 @@
+import json
 import struct
 from twisted.internet import reactor
 from twisted.internet.protocol import Protocol
@@ -9,7 +10,12 @@ class Greeter(Protocol):
         self._name = name
 
     def connectionMade(self):
-        self.sendMessage('{{"announce":"{:s}"}}'.format(self._name))
+        data = {
+            "command":"announce",
+            "username": self._name
+        }
+        msg = json.dumps(data) 
+        self.sendMessage(msg)
             
     def sendMessage(self, msg):
         msg_as_bytes = msg.encode("utf-8")
