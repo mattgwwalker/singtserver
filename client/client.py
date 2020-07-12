@@ -23,6 +23,9 @@ class Greeter(Protocol):
         encoded_msg = len_as_short + msg_as_bytes
         self.transport.write(encoded_msg)
 
+    def dataReceived(self, data):
+        print("data received:", data)
+
         
 def gotConnectedProtocol(p):
     p.sendMessage("Hello")

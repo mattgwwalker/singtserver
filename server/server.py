@@ -1,7 +1,9 @@
-import struct
-import json
 from enum import Enum
+import json
+import os
+import struct
 from twisted.internet import protocol, reactor, endpoints
+from twisted.internet import defer
 
 class Server(protocol.Protocol):
     class State:
@@ -17,6 +19,41 @@ class Server(protocol.Protocol):
     def announce(self, json_data):
         username = json_data["username"]
         print("User '{:s}' has just announced themselves".format(username))
+        self.send_file("server.py")
+
+    def send_file(self, filename):
+        d = defer.Deferred()
+
+        f = open(filename, "rb")
+
+        # Get size of file.  See
+        # https://stackoverflow.com/questions/33683848/python-2-7-get-the-size-of-a-file-just-from-its-handle-and-not-its-path
+        file_size = os.fstat(f.fileno()).st_size
+        print("file_size:", file_size)
+
+        # Send the number of bytes in the file
+        file_size_as_bytes = struct.pack("I", file_size)
+        self.transport.write(file_size_as_bytes)
+
+        bytes_read = 0
+        def send_file_in_parts(num_bytes):
+            nonlocal bytes_read
+            while True:
+                data = f.read(num_bytes)
+                if len(data) == 0:
+                    # We've come to the end of the file
+                    break
+                bytes_read += len(data)
+                self.transport.write(data)
+                yield bytes_read
+
+        print(list(send_file_in_parts(1000)))
+
+        
+        
+            
+            
+            
 
     # The message is complete and should not contain any extra data
     def process(self, msg):
@@ -43,7 +80,6 @@ class Server(protocol.Protocol):
         else:
             print("Unknown command ({:s})".format(command))
 
-        #self.transport.write(data)
 
         
     # Data received may be a partial package, or it may be multiple
