@@ -17,25 +17,24 @@ class Server(protocol.Protocol):
         self._state = Server.State.STARTING
         self._length = None
     
+
     def announce(self, json_data):
         username = json_data["username"]
         print("User '{:s}' has just announced themselves".format(username))
-        self.send_file("server.py")
+
 
     def send_file(self, filename):
-        d = defer.Deferred()
-
         f = open(filename, "rb")
 
         # Get size of file.  See
         # https://stackoverflow.com/questions/33683848/python-2-7-get-the-size-of-a-file-just-from-its-handle-and-not-its-path
         file_size = os.fstat(f.fileno()).st_size
-        print("file_size:", file_size)
 
         # Send the number of bytes in the file
         file_size_as_bytes = struct.pack("I", file_size)
         self.transport.write(file_size_as_bytes)
 
+        # Send the file in parts so that we don't block the reactor
         bytes_read = 0
         def send_file_in_parts(num_bytes):
             nonlocal bytes_read
@@ -48,14 +47,11 @@ class Server(protocol.Protocol):
                 self.transport.write(data)
                 yield bytes_read
 
-        task.cooperate(send_file_in_parts(1000))
+        cooperative_task = task.cooperate(send_file_in_parts(1000))
 
-        
-        
-            
-            
-            
+        return cooperative_task.whenDone()
 
+    
     # The message is complete and should not contain any extra data
     def process(self, msg):
         print("Trying to process '{:s}'".format(msg))
@@ -80,7 +76,6 @@ class Server(protocol.Protocol):
             self.announce(json_data)
         else:
             print("Unknown command ({:s})".format(command))
-
 
         
     # Data received may be a partial package, or it may be multiple
