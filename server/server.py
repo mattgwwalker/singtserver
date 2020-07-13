@@ -15,14 +15,43 @@ class Simple(resource.Resource):
 
 file_resource = File("./")
 
+
+# See https://github.com/juggernaut/twisted-sse-demo/blob/master/sse_server.py
 class EventSource(resource.Resource):
     isLeaf = True
+
+    def __init__(self):
+        self.subscribers = set()
+
+    
     def render_GET(self, request):
         request.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
-        return b"data: This is a test event\n\n"
+        request.setResponseCode(200)
+        #log.msg("Adding subscriber...")
+        self.subscribers.add(request)
+        d = request.notifyFinish()
+        d.addBoth(self.remove_subscriber)
+        request.write("")
+        return server.NOT_DONE_YET
 
+    
+    def remove_subscriber(self, subscriber):
+        if subscriber in self.subscribers:
+            #log.msg("Removing subscriber..")
+            self.subscribers.remove(subscriber)
+
+
+    def publish_to_all(self, data):
+        for subscriber in self.subscribers:
+            for line in data:
+                subscriber.write("data: {:s}\n".format(line).encode("utf-8"))
+            # A extra new line is required to dispatch the event to the client
+            subscriber.write(b"\n")
+
+            
 root = file_resource
-root.putChild(b"eventsource", EventSource())
+eventsource_resource = EventSource()
+root.putChild(b"eventsource", eventsource_resource)
     
 #site = server.Site(Simple())
 #site = server.Site(file_resource)
@@ -159,6 +188,6 @@ listening_port_deferred = endpoints.serverFromString(reactor, "tcp:1234").listen
 def print_host(listening_port):
     print("listening_port.getHost():", listening_port.getHost())
 listening_port_deferred.addCallback(print_host)
-                           
 
+reactor.callLater(3, eventsource_resource.publish_to_all, ["testing"])
 reactor.run()
