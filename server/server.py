@@ -5,6 +5,18 @@ import struct
 from twisted.internet import protocol, reactor, endpoints
 from twisted.internet import defer
 from twisted.internet import task
+from twisted.web import server, resource
+
+
+class Simple(resource.Resource):
+    isLeaf = True
+    def render_GET(self, request):
+        return b"<html>Hello, world!</html>"
+
+site = server.Site(Simple())
+reactor.listenTCP(8080, site)
+
+
 
 class Server(protocol.Protocol):
     class State:
