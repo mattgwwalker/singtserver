@@ -6,14 +6,27 @@ from twisted.internet import protocol, reactor, endpoints
 from twisted.internet import defer
 from twisted.internet import task
 from twisted.web import server, resource
-
+from twisted.web.static import File
 
 class Simple(resource.Resource):
-    isLeaf = True
+    #isLeaf = True
     def render_GET(self, request):
         return b"<html>Hello, world!</html>"
 
-site = server.Site(Simple())
+file_resource = File("./")
+
+class EventSource(resource.Resource):
+    isLeaf = True
+    def render_GET(self, request):
+        request.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
+        return b"data: This is a test event\n\n"
+
+root = file_resource
+root.putChild(b"eventsource", EventSource())
+    
+#site = server.Site(Simple())
+#site = server.Site(file_resource)
+site = server.Site(root)
 reactor.listenTCP(8080, site)
 
 
@@ -28,6 +41,8 @@ class Server(protocol.Protocol):
         self._buffer = b""
         self._state = Server.State.STARTING
         self._length = None
+
+        #print("self.transport.getHost():", self.transport.getHost())
     
 
     def announce(self, json_data):
@@ -137,7 +152,13 @@ class Server(protocol.Protocol):
  
 class ServerFactory(protocol.Factory):
     def buildProtocol(self, addr):
+        print("addr.host:", addr.host)
         return Server()
 
-endpoints.serverFromString(reactor, "tcp:1234").listen(ServerFactory())
+listening_port_deferred = endpoints.serverFromString(reactor, "tcp:1234").listen(ServerFactory())
+def print_host(listening_port):
+    print("listening_port.getHost():", listening_port.getHost())
+listening_port_deferred.addCallback(print_host)
+                           
+
 reactor.run()
