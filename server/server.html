@@ -1,37 +1,25 @@
+<!DOCTYPE html>
 <html>
 
   <head>
-    <title>Virtual Choir Server</title>
+    <meta charset="UTF-8">
+    <title>Singt Server</title>
+    <script src="jquery-3.5.1.js" defer></script>
+    <script src="server.js" defer></script>
   </head>
 
   <body>
-    <h1>Virtual Choir Server: Mockup Interface</h1>
+    <h1>Singt Server</h1>
 
-    <p>This is an instance of our Virtual Choir Server software;
-    version 0.1.  This software creates a virtual rehearsal space
-    where people can talk and sing together.  This software accepts
-    connections from the Virtual Choir Client.</p>
-
-    <h2>Connecting</h2>
-
-    <p>In order for people to be able to connect to this server, you
-    will need to share the connection details.  This could be done,
-    for example, by email.  Copy the text in the box below and send it
-    to all those who you would like to join this space.</p>
-
-    <p>Connection details: <input type="text"></p>
+    <p>This is an instance of our Singt Server software; version 0.1.
+    This software creates a virtual rehearsal space where people can
+    talk and sing together.  This software accepts connections from
+    the Singt Client.</p>
 
     <h2>Participants</h2>
 
-    <p>The following people are currently connected to this
-      server:</p>
-
-    <ul>
-      <li>Amy</li>
-      <li>Marie-Claire</li>
-      <li>Virginie</li>
-    </ul>
-
+    <div id="participants">
+    </div>
     
     <h2>Backing Tracks</h2>
 

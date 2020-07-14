@@ -22,17 +22,28 @@ class EventSource(resource.Resource):
 
     def __init__(self):
         self.subscribers = set()
-
+        self._initialisers = {}
+        
     
     def render_GET(self, request):
         request.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
         request.setResponseCode(200)
+        self.add_subscriber(request)
+        request.write("")
+        return server.NOT_DONE_YET
+
+    
+    def add_subscriber(self, request):
         #log.msg("Adding subscriber...")
         self.subscribers.add(request)
         d = request.notifyFinish()
         d.addBoth(self.remove_subscriber)
-        request.write("")
-        return server.NOT_DONE_YET
+
+        # Loop through all the initialisers to bring the newly
+        # connected client up to date.
+        for event, f in self._initialisers.items():
+            data = f()
+            self.publish_to_one(request, event, data)
 
     
     def remove_subscriber(self, subscriber):
@@ -41,12 +52,22 @@ class EventSource(resource.Resource):
             self.subscribers.remove(subscriber)
 
 
-    def publish_to_all(self, data):
+    def publish_to_all(self, event, data):
         for subscriber in self.subscribers:
-            for line in data:
-                subscriber.write("data: {:s}\n".format(line).encode("utf-8"))
-            # A extra new line is required to dispatch the event to the client
-            subscriber.write(b"\n")
+            self.publish_to_one(subscriber, event, data)
+
+            
+    def publish_to_one(self, request, event, data):
+        request.write("event: {:s}\n".format(event).encode("utf-8"))
+        for line in data:
+            request.write("data: {:s}\n".format(line).encode("utf-8"))
+        # A extra new line is required to dispatch the event to the client
+        request.write(b"\n")
+                          
+
+    def add_initialiser(self, event, f):
+        self._initialisers[event] = f
+        
 
             
 root = file_resource
@@ -59,24 +80,54 @@ site = server.Site(root)
 reactor.listenTCP(8080, site)
 
 
-
+# An instance of this class is created for each client connection.
 class Server(protocol.Protocol):
     class State:
         STARTING = 10
         CONTINUING = 20
     
-    def __init__(self):
+    def __init__(self, shared_context):
         super()
         self._buffer = b""
         self._state = Server.State.STARTING
         self._length = None
 
-        #print("self.transport.getHost():", self.transport.getHost())
-    
+        self._shared_context = shared_context
+
 
     def announce(self, json_data):
+        """Announces username, which is then stored in the shared context.
+        Returns True if username is unused."""
+
+        # Extract the username
         username = json_data["username"]
+
+        # Check if the username is already registered
+        if username in self._shared_context.usernames:
+            # The username already registered; disconnect client
+            print("Username '{:s}' already in use".format(username))
+            msg = {
+                "error": (
+                    "Username '{:s}' already in use.  ".format(username)+
+                    "Try again with a different username."
+                )
+            }
+            self.transport.write(json.dumps(msg).encode("utf-8"))
+            self.transport.loseConnection()
+            return False
+
+        # Store username and this protocol instance in the shared
+        # context
         print("User '{:s}' has just announced themselves".format(username))
+        self._shared_context.usernames[username] = self
+
+        # Publish an event to update the web interface
+        data = {
+            "participants": list(self._shared_context.usernames.keys())
+        }
+        self._shared_context.eventsource.publish_to_all("update_participants", [json.dumps(data)])
+        
+        return True
 
 
     def send_file(self, filename):
@@ -110,28 +161,29 @@ class Server(protocol.Protocol):
     
     # The message is complete and should not contain any extra data
     def process(self, msg):
-        print("Trying to process '{:s}'".format(msg))
+        # Parse JSON message
         try:
             json_data = json.loads(msg)
-
         except Exception as e:
             print("Failed to parse message as JSON.")
             print("msg:", msg)
             print("Exception:",e)
             return
 
-        print("json_data:", json_data)
-
+        # Execute commands
         try:
             command = json_data["command"]
         except KeyError:
             print("Failed to find 'command' key in JSON")
+            print("msg:", msg)
             return
         
         if command=="announce":
             self.announce(json_data)
         else:
             print("Unknown command ({:s})".format(command))
+            print("msg:", msg)
+            return
 
         
     # Data received may be a partial package, or it may be multiple
@@ -143,12 +195,12 @@ class Server(protocol.Protocol):
         data = self._buffer + data
 
         while len(data) > 0:
-            print("Considering data:", data)
+            #print("Considering data:", data)
             
             if self._state == Server.State.STARTING:
                 # Read the first two bytes as a short integer
                 self._length = struct.unpack("H",data[0:2])[0]
-                print("length:",self._length)
+                #print("length:",self._length)
 
                 # Remove the short from the data
                 data = data[2:]
@@ -173,21 +225,27 @@ class Server(protocol.Protocol):
                 else:
                     # We do not have sufficient characters.  Store them in
                     # the buffer till next time we receive data.
-                    print("We do not have sufficient characters; waiting")
-                    print("len(data):", len(data))
+                    #print("We do not have sufficient characters; waiting")
+                    #print("len(data):", len(data))
                     self._buffer = data
                     data = ""
 
  
 class ServerFactory(protocol.Factory):
+    class SharedContext:
+        def __init__(self):
+            self.eventsource = eventsource_resource
+            self.usernames = {}
+            
+    def __init__(self):
+        self._shared_context = ServerFactory.SharedContext()        
+    
     def buildProtocol(self, addr):
-        print("addr.host:", addr.host)
-        return Server()
+        return Server(self._shared_context)
 
-listening_port_deferred = endpoints.serverFromString(reactor, "tcp:1234").listen(ServerFactory())
-def print_host(listening_port):
-    print("listening_port.getHost():", listening_port.getHost())
-listening_port_deferred.addCallback(print_host)
+    def startFactory(self):
+        print("Server started")
 
-reactor.callLater(3, eventsource_resource.publish_to_all, ["testing"])
+endpoints.serverFromString(reactor, "tcp:1234").listen(ServerFactory())
+
 reactor.run()
