@@ -59,8 +59,7 @@ class EventSource(resource.Resource):
             
     def publish_to_one(self, request, event, data):
         request.write("event: {:s}\n".format(event).encode("utf-8"))
-        for line in data:
-            request.write("data: {:s}\n".format(line).encode("utf-8"))
+        request.write("data: {:s}\n".format(data).encode("utf-8"))
         # A extra new line is required to dispatch the event to the client
         request.write(b"\n")
                           
@@ -125,7 +124,7 @@ class Server(protocol.Protocol):
         data = {
             "participants": list(self._shared_context.usernames.keys())
         }
-        self._shared_context.eventsource.publish_to_all("update_participants", [json.dumps(data)])
+        self._shared_context.eventsource.publish_to_all("update_participants", json.dumps(data))
         
         return True
 
@@ -238,13 +237,25 @@ class ServerFactory(protocol.Factory):
             self.usernames = {}
             
     def __init__(self):
-        self._shared_context = ServerFactory.SharedContext()        
+        self._shared_context = ServerFactory.SharedContext()
+        self._shared_context.eventsource.add_initialiser(
+            "update_participants",
+            self.initialiseParticipants
+        )
     
     def buildProtocol(self, addr):
         return Server(self._shared_context)
 
     def startFactory(self):
         print("Server started")
+
+    def initialiseParticipants(self):
+        print("in initialiseParticipants()")
+        data = {
+            "participants": list(self._shared_context.usernames.keys())
+        }
+        return json.dumps(data)
+        
 
 endpoints.serverFromString(reactor, "tcp:1234").listen(ServerFactory())
 
