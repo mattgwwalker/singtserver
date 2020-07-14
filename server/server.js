@@ -1,5 +1,4 @@
-// Listen for EventSource events, log them to the console
-
+// Handle EventSource event 'update_participants' 
 updateParticipants = function(event) {
     console.log(event);
     let parsed_data = JSON.parse(event.data);
@@ -33,9 +32,45 @@ updateParticipants = function(event) {
 };
 
 
+// Handle uploading of backing track
+uploadBackingTrack = function() {
+    console.log("Uploading backing track")
+
+    let formData = new FormData();
+    formData.append("command", "upload_backing_track");
+    formData.append("name", $("#backing_track_name").val());
+    formData.append("file", $("#backing_track_file").get(0).files[0]);
+    
+    $.ajax({
+        url: 'backing_track',
+        type: 'POST',
+        data: formData,
+	dataType: "text",
+	processData: false,
+	mimeType: 'multipart/form-data',
+	contentType: false,
+	cache: false,
+        success: function(msg) {
+            alert('Backing track file sent');
+        },
+	error: function(jqXHR, st, error) {
+            // Hopefully we should never reach here
+            //console.log(jqXHR);
+            //console.log(st);
+            console.log("error:",error);
+	    //console.log("status:",st);
+	    alert("FAILED to send backing track file");
+	}
+    });
+}
+
+
 // When the document has finished loading
 $(document).ready(function() {
     // Connect to EventSource
     let eventSource = new EventSource('eventsource');
     eventSource.addEventListener("update_participants", updateParticipants, false);
+
+    // Connect backing track upload button
+    $("#backing_track_upload").click(uploadBackingTrack);
 })

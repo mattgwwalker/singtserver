@@ -16,6 +16,27 @@ class Simple(resource.Resource):
 file_resource = File("./")
 
 
+class BackingTrack(resource.Resource):
+    isLeaf = True
+
+    def render_POST(self, request):
+        request.setResponseCode(201)
+        
+        command = request.args[b"command"][0].decode("utf-8") 
+        print("command:", command)
+
+        name = request.args[b"name"][0].decode("utf-8")
+        print("name:", name)
+
+        file_contents = request.args[b"file"][0]
+        f = open("test", "wb")
+        f.write(file_contents)
+        f.close()
+        print("file written")
+        
+        return b"{\'result\': \'success\'}"
+        
+
 # See https://github.com/juggernaut/twisted-sse-demo/blob/master/sse_server.py
 class EventSource(resource.Resource):
     isLeaf = True
@@ -70,9 +91,13 @@ class EventSource(resource.Resource):
 
             
 root = file_resource
+
 eventsource_resource = EventSource()
 root.putChild(b"eventsource", eventsource_resource)
-    
+
+backing_track_resource = BackingTrack()
+root.putChild(b"backing_track", backing_track_resource)
+
 #site = server.Site(Simple())
 #site = server.Site(file_resource)
 site = server.Site(root)
@@ -264,7 +289,6 @@ class ServerFactory(protocol.Factory):
         print("Server started")
 
     def initialiseParticipants(self):
-        print("in initialiseParticipants()")
         data = {
             "participants": list(self._shared_context.usernames.keys())
         }
