@@ -92,6 +92,7 @@ class Server(protocol.Protocol):
         self._length = None
 
         self._shared_context = shared_context
+        self.username = None
 
 
     def announce(self, json_data):
@@ -117,6 +118,7 @@ class Server(protocol.Protocol):
 
         # Store username and this protocol instance in the shared
         # context
+        self.username = username
         print("User '{:s}' has just announced themselves".format(username))
         self._shared_context.usernames[username] = self
 
@@ -228,6 +230,18 @@ class Server(protocol.Protocol):
                     #print("len(data):", len(data))
                     self._buffer = data
                     data = ""
+
+    def connectionLost(self, reason):
+        print("Connection lost to user '{:s}':".format(self.username), reason)
+        del self._shared_context.usernames[self.username]
+        data = {
+            "participants": list(self._shared_context.usernames.keys())
+        }
+        self._shared_context.eventsource.publish_to_all(
+            "update_participants",
+            json.dumps(data)
+        )
+            
 
  
 class ServerFactory(protocol.Factory):
