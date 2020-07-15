@@ -71,31 +71,21 @@ dbpool = adbapi.ConnectionPool("sqlite3", db_filename)
 
 # Initialise the database structure from instructions in file
 def initialise_database(cursor):
-    try:
-        print("Initialising database")
-        initialisation_commands_filename = "database.sql"
-        f = open(initialisation_commands_filename, "r")
-        initialisation_commands = f.read()
-        print("Raising exception")
-        #import pdb; pdb.set_trace() # DEBUG
-        log.error("Raising exception")
-        raise Exception("Testing")
-        print(initialisation_commands)
+    log.info("Initialising database")
+    initialisation_commands_filename = "database.sql"
+    f = open(initialisation_commands_filename, "r")
+    initialisation_commands = f.read()
+    return cursor.executescript(initialisation_commands)
 
-        return cursor.executemany(initialisation_commands)
-    except Exception as e:
-        log.error("Exception caught; re-raising")
-        log.error(str(e))
-        raise e
 
 # If the database did not exist, initialise the database
 if not database_exists:
     print("Database requires initialisation")
     d = dbpool.runInteraction(initialise_database)
     def on_success(data):
-        print("Database successfully initialised")
+        log.info("Database successfully initialised")
     def on_error(data):
-        print("Failed to initialise the database")
+        log.error("Failed to initialise the database")
         reactor.stop()
 
     d.addCallback(on_success)
