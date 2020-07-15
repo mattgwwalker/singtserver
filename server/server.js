@@ -45,13 +45,22 @@ uploadBackingTrack = function() {
         url: 'backing_track',
         type: 'POST',
         data: formData,
-	dataType: "text",
+	dataType: "json",
 	processData: false,
 	mimeType: 'multipart/form-data',
 	contentType: false,
 	cache: false,
         success: function(msg) {
-            alert('Backing track file sent');
+	    console.log(msg);
+	    if ("result" in msg) {
+		if (msg["result"]=="error") {
+		    reason = msg["reason"]
+		    alert("Error: "+reason);
+		}
+	    }
+	    else {
+		alert('Backing track added successfully');
+	    }
         },
 	error: function(jqXHR, st, error) {
             // Hopefully we should never reach here

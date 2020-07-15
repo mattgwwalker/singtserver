@@ -138,15 +138,21 @@ class BackingTrack(resource.Resource):
         if is_wav(first_bytes):
             print("Uploaded file is a WAV file; need to convert it to Opus")
             # TODO: Convert WAV to Opus.
-            raise Exception("Not yet implemented");
+            raise Exception("Not yet implemented"); # TODO
             
         elif is_ogg(first_bytes):
             print("Uploaded file is an Ogg Stream, which may be in Opus format; double-check.")
             # TODO: Double-check it's actually an Opus-formatted Ogg stream.
             
         else:
-            log.warn("Uploaded file was neither WAV nor Opus")
-            raise Exception("Uploaded file was neither WAV nor Opus")
+            log.warn("Uploaded file was neither wav nor Opus")
+            # Inform the user that there was a problem
+            msg = {
+                "result":"error",
+                "reason":("Regarding the backing track '{:s}', the uploaded ".format(name)+
+                           "file was in neither wav nor Opus formats.")
+            }
+            return json.dumps(msg).encode("utf-8")
         
         # Add backing track into database
         def add_backing_track():
@@ -165,7 +171,7 @@ class BackingTrack(resource.Resource):
             filename = backing_track_dir / (str(backing_track_id)+".opus")
             log.info("Writing uploaded file as '{:s}'".format(str(filename)))
 
-            raise Exception("Not yet implemented");
+            raise Exception("Not yet implemented"); # TODO
             
 
         def on_error(data):
