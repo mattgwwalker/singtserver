@@ -127,21 +127,27 @@ class BackingTrack(resource.Resource):
 
         # Check if the file is WAV or Opus or something else
         f.seek(0)
-        first_chars = f.read(4)
+        first_bytes = f.read(4)
 
-        if first_chars == b"RIFF":
+        def is_wav(first_bytes):
+            return first_bytes == b"RIFF"
+
+        def is_ogg(first_bytes):
+            return first_bytes == b"OggS"
+
+        if is_wav(first_bytes):
             print("Uploaded file is a WAV file; need to convert it to Opus")
             # TODO: Convert WAV to Opus.
+            raise Exception("Not yet implemented");
             
-        elif first_chars == b"OggS":
+        elif is_ogg(first_bytes):
             print("Uploaded file is an Ogg Stream, which may be in Opus format; double-check.")
             # TODO: Double-check it's actually an Opus-formatted Ogg stream.
             
         else:
-            print("Uploaded file was neither WAV nor Opus; error.")
+            log.warn("Uploaded file was neither WAV nor Opus")
+            raise Exception("Uploaded file was neither WAV nor Opus")
         
-        f.close()
-
         # Add backing track into database
         def add_backing_track():
             def write_to_database(cursor):
@@ -156,7 +162,11 @@ class BackingTrack(resource.Resource):
             print("in on_success, rowid:", backing_track_id)
 
             # Write file
-            filename = XXX
+            filename = backing_track_dir / (str(backing_track_id)+".opus")
+            log.info("Writing uploaded file as '{:s}'".format(str(filename)))
+
+            raise Exception("Not yet implemented");
+            
 
         def on_error(data):
             print("in on_error, data:", data)
