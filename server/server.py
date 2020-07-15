@@ -1,12 +1,108 @@
 from enum import Enum
 import json
 import os
+from pathlib import Path
 import struct
+import subprocess
+import tempfile
+
 from twisted.internet import protocol, reactor, endpoints
 from twisted.internet import defer
 from twisted.internet import task
 from twisted.web import server, resource
 from twisted.web.static import File
+from twisted.enterprise import adbapi
+
+# Setup logging
+import sys
+from twisted.logger import Logger, LogLevel, LogLevelFilterPredicate, \
+    textFileLogObserver, FilteringLogObserver, globalLogBeginner
+
+
+logfile = open("application.log", 'w')
+logtargets = []
+
+# Set up the log observer for stdout.
+logtargets.append(
+    FilteringLogObserver(
+        textFileLogObserver(sys.stdout),
+        predicates=[LogLevelFilterPredicate(LogLevel.debug)] # was: warn
+    )
+)
+
+# Set up the log observer for our log file. "debug" is the highest possible level.
+logtargets.append(
+    FilteringLogObserver(
+        textFileLogObserver(logfile),
+        predicates=[LogLevelFilterPredicate(LogLevel.debug)]
+    )
+)
+
+# Direct the Twisted Logger to log to both of our observers.
+globalLogBeginner.beginLoggingTo(logtargets)
+
+# Start a logger with a namespace for a particular subsystem of our application.
+log = Logger("server")
+
+
+
+
+
+
+
+
+# Define directories
+session_dir = Path("session_files/")
+backing_track_dir = Path(session_dir / "backing_tracks/")
+
+# Ensure directories exist
+session_dir.mkdir(exist_ok=True)
+backing_track_dir.mkdir(exist_ok=True)
+
+# Define database filename
+db_filename = session_dir / "database.sqlite3"
+
+# Note if database already exists
+database_exists = db_filename.is_file()
+    
+# Open a connection to the database.  SQLite will create the file if
+# it doesn't already exist.
+dbpool = adbapi.ConnectionPool("sqlite3", db_filename)
+
+# Initialise the database structure from instructions in file
+def initialise_database(cursor):
+    try:
+        print("Initialising database")
+        initialisation_commands_filename = "database.sql"
+        f = open(initialisation_commands_filename, "r")
+        initialisation_commands = f.read()
+        print("Raising exception")
+        #import pdb; pdb.set_trace() # DEBUG
+        log.error("Raising exception")
+        raise Exception("Testing")
+        print(initialisation_commands)
+
+        return cursor.executemany(initialisation_commands)
+    except Exception as e:
+        log.error("Exception caught; re-raising")
+        log.error(str(e))
+        raise e
+
+# If the database did not exist, initialise the database
+if not database_exists:
+    print("Database requires initialisation")
+    d = dbpool.runInteraction(initialise_database)
+    def on_success(data):
+        print("Database successfully initialised")
+    def on_error(data):
+        print("Failed to initialise the database")
+        reactor.stop()
+
+    d.addCallback(on_success)
+    d.addErrback(on_error)
+
+
+
 
 class Simple(resource.Resource):
     #isLeaf = True
@@ -19,6 +115,12 @@ file_resource = File("./")
 class BackingTrack(resource.Resource):
     isLeaf = True
 
+    def __init__(self):
+        super()
+
+        # Check that backing track directory exists
+        
+
     def render_POST(self, request):
         request.setResponseCode(201)
         
@@ -28,11 +130,50 @@ class BackingTrack(resource.Resource):
         name = request.args[b"name"][0].decode("utf-8")
         print("name:", name)
 
+        # Save file
         file_contents = request.args[b"file"][0]
-        f = open("test", "wb")
+        f = tempfile.TemporaryFile()
         f.write(file_contents)
+
+        # Check if the file is WAV or Opus or something else
+        f.seek(0)
+        first_chars = f.read(4)
+
+        if first_chars == b"RIFF":
+            print("Uploaded file is a WAV file; need to convert it to Opus")
+            # TODO: Convert WAV to Opus.
+            
+        elif first_chars == b"OggS":
+            print("Uploaded file is an Ogg Stream, which may be in Opus format; double-check.")
+            # TODO: Double-check it's actually an Opus-formatted Ogg stream.
+            
+        else:
+            print("Uploaded file was neither WAV nor Opus; error.")
+        
         f.close()
-        print("file written")
+
+        # Add backing track into database
+        def add_backing_track():
+            def write_to_database(cursor):
+                print("Inserting '{:s}' into backing tracks".format(name))
+                cursor.execute("INSERT INTO BackingTracks(trackName) VALUES (?);", (name,))
+                backing_track_id = cursor.lastrowid
+                return backing_track_id
+            return dbpool.runInteraction(write_to_database)
+            
+        
+        def on_success(backing_track_id):
+            print("in on_success, rowid:", backing_track_id)
+
+            # Write file
+            filename = XXX
+
+        def on_error(data):
+            print("in on_error, data:", data)
+
+        d = add_backing_track()
+        d.addCallback(on_success)
+        d.addErrback(on_error)
         
         return b"{\'result\': \'success\'}"
         
