@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+		<title>Singt - Composer</title>
+		
+		<link href="./css/bootstrap.min.css" rel="stylesheet">
+		<link href="./css/singt.css" rel="stylesheet">
+
+
+		<!--<link href="navbar.css" rel="stylesheet">-->
+	</head>
+	<body>
+		
+		<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+			<div class="container-xl">
+				<span class="navbar-brand">Singt</span>
+
+				<!-- the menu button that gets revealed if composer window is small-->
+				<button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbar_composer" aria-controls="navbar_composer" aria-expanded="false" aria-label="Toggle navigation">
+	  				<span class="navbar-toggler-icon"></span>
+				</button>
+	
+				<div class="collapse navbar-collapse" id="navbar_composer">
+					<ul class="navbar-nav mr-auto">
+						<li class="nav-item">
+							<a class="nav-link" href="#page_settings">Settings</a>
+						</li>
+						<li class="nav-item">
+							<a class="nav-link" href="#page_recording">
+								Recording
+								<span class="badge badge-pill badge-danger pulse">&nbsp;</span>
+								<span id="nav-participants" class="d-none badge badge-light">3</span> <!-- number of users -->
+							</a>
+						</li>
+						<li class="nav-item">
+							<a class="nav-link" href="#page_playback">Playback</a>
+						</li>
+					  </ul>
+				</div>
+			</div>
+		</nav>
+
+		<div class="container-xl mt-5 mb-3">
+			<div id="page_settings" class="page">
+				<div class="card">
+					<div class="card-header"><h2><img src="./icons/sliders.svg" alt="" width="32" height="32" class="mr-2">Settings</h2></div>
+					<div class="card-body">
+						<p class="mb-3">
+							This is an instance of our Singt Server software; version 0.1.
+							This software creates a virtual rehearsal space where people can
+							talk and sing together.  This software accepts connections from
+							the Singt Client.
+						</p>
+
+						<form>
+							<div class="form-group row">
+								<label for="staticEmail" class="col-sm-2 col-form-label">Email</label>
+								<div class="col-sm-10">
+									<input type="text" readonly class="form-control-plaintext" id="staticEmail" value="email@example.com">
+								</div>
+							</div>
+							<div class="form-group row">
+								<label for="inputPassword" class="col-sm-2 col-form-label">Password</label>
+								<div class="col-sm-10">
+									<input type="password" class="form-control" id="inputPassword">
+								</div>
+							</div>
+						</form>
+
+
+
+					</div>
+				</div>
+			</div>
+			<div id="page_recording" class="page">
+				<div class="card">
+					<div class="card-header"><h2><img src="./icons/music-note-list.svg" alt="" width="32" height="32" class="mr-2">Recording</h2></div>
+					<div class="card-body">
+						<p class="mb-3">
+							Lorem ipsum dolor sit amet consectetur adipisicing elit. Tempore quasi sed dolor voluptate beatae facilis qui recusandae enim, doloremque dolorum doloribus tempora quibusdam ipsa repellat maxime dolorem? Officiis, libero odit.
+						</p>
+						<div class="row">
+							<div class="col">
+								<h3>Something</h3>
+							</div>
+							<div class="col col-lg-4">
+								<h3>Participants</h3>
+
+
+								<ul class="d-none list-group" id="participants">
+								</ul>
+								<div id="no_participants" class="d-none alert alert-info" role="alert">
+									<h4 class="alert-heading">Uh oh</h4>
+									<p>
+										<img src="./icons/person-badge.svg" alt="" width="32" height="32" title="Person" class="mr-2"> No one has connected yet.
+									</p>
+									<hr class='thin'>
+									<p class="mb-0 text-sm text-muted">If a tree falls in the forest without a conductor... </p>
+								</div>
+							</div>
+						  </div>
+					</div>
+				</div>
+			</div>
+			<div id="page_playback" class="page">
+
+				<div class="card">
+					<div class="card-header"><h2><img src="./icons/music-player-fill.svg" alt="" width="32" height="32" class="mr-2">Playback</h2></div>
+					<div class="card-body">
+						<p class="mb-3">
+							Lorem ipsum dolor sit amet consectetur adipisicing elit. Tempore quasi sed dolor voluptate beatae facilis qui recusandae enim, doloremque dolorum doloribus tempora quibusdam ipsa repellat maxime dolorem? Officiis, libero odit.
+						</p>
+
+						<form>
+							<div class="form-group row">
+								<label class="col-sm-2 col-form-label">Tracks</label>
+								<div class="col-sm-10">
+									<select class="form-control">
+										<option>Choose one</option>
+										<option value="1234">Happy Birthday</option>
+									</select>
+									<div class="mt-2">
+										<button id="show_upload_form" class="btn btn-outline-secondary mr-2">Upload new track</button>
+										<span class="text-muted">(Accepted formats Wav, Opus)</span>
+									</div>
+
+
+									
+								</div>
+
+
+							</div>
+
+							<div id="upload_form" class="d-none">
+								<div class="form-group row">
+									<label class="col-sm-2 col-form-label">Name</label>
+									<div class="col-sm-10">
+										<input id="backing_track_name" type="text" class="form-control" required>
+									</div>
+								</div>
+								<div class="form-group row">
+									<label class="col-sm-2 col-form-label">File</label>
+									<div class="col-sm-10">
+										<div class="input-group mb-3">
+											<div class="custom-file">
+											  <input type="file" class="custom-file-input" id="backing_track_file">
+											  <label class="custom-file-label" for="backing_track_name" aria-describedby="backing_track_name">Choose file</label>
+											</div>
+										  </div>
+
+
+										  <button class="btn btn-primary mr-2"id="backing_track_upload">Upload</button>
+										  <button class="btn btn-outline-secondary"id="backing_track_cancel">Cancel</button>
+									</div>
+								</div>
+								
+
+							</div>
+
+
+    
+							<div class="form-group row">
+								<label class="col-sm-2 col-form-label">Choose the take</label>
+								<div class="col-sm-10">
+									<select class="form-control">
+										<option>Choose one</option>
+										<option value="1234-0">Original track</option>
+										<option value="1234-1">Take 1</option>
+									</select>
+								</div>
+							</div>
+
+							<hr> 
+							<button class="btn btn-primary">Play take</button>
+							<button class="btn btn-outline-secondary ml-2">Rename take</button>
+							<button class="btn btn-outline-danger ml-2">Delete take</button>
+							<p class="text-muted mt-2">
+								(Choosing play will stop any current recording)
+							</p>
+						</form>
+					</div>
+				</div>
+			</div>
+
+
+		</div>
+
+
+	
+		<script src="./js/jquery.slim.min.js"></script>
+		<script src="./js/bootstrap.min.js"></script>
+		<script src="./js/composer.js"></script>
+	</body>
+</html>
