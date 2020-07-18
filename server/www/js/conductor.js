@@ -1,4 +1,4 @@
-
+// Create single namespace
 window.SINGT = {};
 
 
@@ -9,7 +9,7 @@ SINGT.wireup = function(){
     SINGT.wireup.nav();
     SINGT.wireup.eventsource();
     SINGT.wireup.forms();
-
+    SINGT.wireup.page_tracks();
 }
 
 SINGT.wireup.nav = function() {
@@ -25,24 +25,35 @@ SINGT.wireup.nav = function() {
         })
     });
     //check for hash
-    var hash = window.location.hash || '#page_settings';
+    var hash = window.location.hash || '#page_tracks';
     hash = hash.split('/')[0]; //allow for splitting has h for multiple uses
     $('a[href="'+hash+'"]').click();
     
 }
+
 SINGT.wireup.eventsource = function(){
     let eventSource = new EventSource('eventsource');
     eventSource.addEventListener("update_participants", SINGT.participants.update, false);
 };
-SINGT.wireup.forms = function() {
-     // Connect backing track upload button
-     $("#backing_track_upload").click(SINGT.tracks.upload);
 
-     $("#show_upload_form").click(function(){
-         $(this).parent().addClass('d-none');
-         $("#upload_form").removeClass('d-none');
-     })
-     $("#backing_track_cancel").click(function(){
+SINGT.wireup.page_tracks = function(){
+    // Ensures that any use of Bootstrap's custom file selector
+    // updates the filename when the user selects a file.
+    $('.custom-file-input').on('change', function() { 
+	let fileName = $(this).val().split('\\').pop(); 
+	$(this).next('.custom-file-label').addClass("selected").html(fileName); 
+    });
+};
+
+SINGT.wireup.forms = function() {
+    // Connect backing track upload button
+    $("#backing_track_upload").click(SINGT.tracks.upload);
+
+    $("#show_upload_form").click(function(){
+        $(this).parent().addClass('d-none');
+        $("#upload_form").removeClass('d-none');
+    })
+    $("#backing_track_cancel").click(function(){
         $("#show_upload_form").parent().removeClass('d-none');
         $("#upload_form").addClass('d-none');
     })
@@ -107,15 +118,21 @@ SINGT.tracks.upload = function() {
                     reason = msg["reason"]
                     alert("Error: "+reason);
                 }
+		else if (msg["result"]=="success") {
+		    alert("Successfully uploaded backing track");
+		}
+		else {
+		    alert("Unexpected response from server:"+msg)
+		}
             } else {
-                alert('Backing track added successfully');
+                alert("Unexpected response from server:"+msg)
             }
         },
         error: function(jqXHR, st, error) {
-                // Hopefully we should never reach here
-                //console.log(jqXHR);
-                //console.log(st);
-                console.log("error:",error);
+            // Hopefully we should never reach here
+            //console.log(jqXHR);
+            //console.log(st);
+            console.log("error:",error);
             //console.log("status:",st);
             alert("FAILED to send backing track file");
         }

@@ -2,6 +2,7 @@ from enum import Enum
 import json
 import os
 from pathlib import Path
+import random
 import struct
 import subprocess
 import tempfile
@@ -12,6 +13,8 @@ from twisted.internet import task
 from twisted.web import server, resource
 from twisted.web.static import File
 from twisted.enterprise import adbapi
+
+import backing_track
 
 # Setup logging
 import sys
@@ -53,10 +56,12 @@ log = Logger("server")
 
 # Define directories
 session_dir = Path("session_files/")
+uploads_dir = Path(session_dir / "uploads/")
 backing_track_dir = Path(session_dir / "backing_tracks/")
 
 # Ensure directories exist
 session_dir.mkdir(exist_ok=True)
+uploads_dir.mkdir(exist_ok=True)
 backing_track_dir.mkdir(exist_ok=True)
 
 # Define database filename
@@ -99,7 +104,7 @@ class Simple(resource.Resource):
     def render_GET(self, request):
         return b"<html>Hello, world!</html>"
 
-file_resource = File("./")
+file_resource = File("./www/")
 
 
 class BackingTrack(resource.Resource):
@@ -122,29 +127,67 @@ class BackingTrack(resource.Resource):
 
         # Save file
         file_contents = request.args[b"file"][0]
-        f = tempfile.TemporaryFile()
-        f.write(file_contents)
 
+        def make_random_filename(ext):
+            return str(random.randint(0, 1e8))+ext
+
+        user_filename = uploads_dir / make_random_filename(".user_upload")
+        user_file = open(user_filename, "wb")
+        user_file.write(file_contents)
+
+        # Open user file for reading.  Previously we were opening the
+        # file just once with the mode 'w+b', but this is incompatible
+        # with reading using Python's wave module.
+        user_file = open(user_filename, "rb")
+        
         # Check if the file is WAV or Opus or something else
-        f.seek(0)
-        first_bytes = f.read(4)
+        first_bytes = user_file.read(4)
+        user_file.seek(0)
 
-        def is_wav(first_bytes):
-            return first_bytes == b"RIFF"
-
-        def is_ogg(first_bytes):
-            return first_bytes == b"OggS"
-
-        if is_wav(first_bytes):
+        if first_bytes == b"RIFF":
             print("Uploaded file is a WAV file; need to convert it to Opus")
-            # TODO: Convert WAV to Opus.
-            raise Exception("Not yet implemented"); # TODO
-            
-        elif is_ogg(first_bytes):
-            print("Uploaded file is an Ogg Stream, which may be in Opus format; double-check.")
-            # TODO: Double-check it's actually an Opus-formatted Ogg stream.
+            # Attempt to convert the uploaded file to Opus format.
+            # Give the converted file a temporary name, as we won't
+            # have the correct name until it's placed in the database,
+            # and we don't want to do that until we've verified that
+            # the conversion process worked correctly.
+            try:
+                output_filename = uploads_dir / make_random_filename(".opus") 
+                output_file = open(output_filename, "wb")
+                backing_track.convert_wav_to_opus(user_file, output_file)
+                user_file.close()
+            except Exception as e:
+                msg = {
+                    "result":"error",
+                    "reason":(f"Regarding the backing track '{name}', the "+
+                              "uploaded wav file was not able to be "+
+                              "converted to Opus format: "+str(e))
+                }
+                log.warn("Failed to convert user wav file to opus: "+str(e))
+                return json.dumps(msg).encode("utf-8")
+                
+            finally:
+                # Delete the original wav file
+                Path(user_filename).unlink()
+                        
+        elif first_bytes == b"OggS":
+            # Uploaded file is an Ogg Stream, which may be in Opus
+            # format; double-check.
+            try:
+                backing_track.validate_oggopus(user_file)
+            except:
+                msg = {
+                    "result":"error",
+                    "reason":("Regarding the backing track '{:s}', the uploaded ".format(name)+
+                               "Opus file was not able to be read correctly.")
+                }
+                return json.dumps(msg).encode("utf-8")
+            output_file = user_file
             
         else:
+            # Delete the original file
+            Path(user_file.name).unlink()
+            
             log.warn("Uploaded file was neither wav nor Opus")
             # Inform the user that there was a problem
             msg = {
@@ -156,6 +199,8 @@ class BackingTrack(resource.Resource):
         
         # Add backing track into database
         def add_backing_track():
+            # TODO: Check that the backing track name hasn't already
+            # been used.
             def write_to_database(cursor):
                 print("Inserting '{:s}' into backing tracks".format(name))
                 cursor.execute("INSERT INTO BackingTracks(trackName) VALUES (?);", (name,))
@@ -163,25 +208,42 @@ class BackingTrack(resource.Resource):
                 return backing_track_id
             return dbpool.runInteraction(write_to_database)
             
-        
         def on_success(backing_track_id):
             print("in on_success, rowid:", backing_track_id)
 
-            # Write file
-            filename = backing_track_dir / (str(backing_track_id)+".opus")
-            log.info("Writing uploaded file as '{:s}'".format(str(filename)))
+            # Rename file
+            desired_filename = backing_track_dir / (str(backing_track_id)+".opus")
+            log.info("Saving uploaded file as '{:s}'".format(str(desired_filename)))
 
-            raise Exception("Not yet implemented"); # TODO
+            output_path = Path(output_file.name)
+            output_path.rename(desired_filename)
+
+            # Close the file
+            output_file.close()
+
+            msg = {
+                "result":"success",
+            }
+
+            request.write(json.dumps(msg).encode("utf-8"))
+            request.finish()            
             
-
         def on_error(data):
             print("in on_error, data:", data)
+            msg = {
+                "result":"error",
+                "reason":str(data)
+            }
+            result = json.dumps(msg).encode("utf-8")
+            print("result:",result)
+            request.write(result)
+            request.finish()
 
         d = add_backing_track()
         d.addCallback(on_success)
         d.addErrback(on_error)
-        
-        return b"{\'result\': \'success\'}"
+
+        return server.NOT_DONE_YET
         
 
 # See https://github.com/juggernaut/twisted-sse-demo/blob/master/sse_server.py
