@@ -49,7 +49,7 @@ CREATE TABLE Recordings (
 
 
 
-/* Test data */
+/* Test data 
 INSERT INTO Participants (participantName)
 VALUES ("Matthew");
 INSERT INTO Participants (participantName)
@@ -59,3 +59,4 @@ INSERT INTO BackingTracks (trackName)
 VALUES ("Happy Birthday");
 INSERT INTO BackingTracks (trackName)
 VALUES ("Don't Cry for me Argentina");
+*/
