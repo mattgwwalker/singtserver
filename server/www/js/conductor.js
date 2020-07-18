@@ -166,7 +166,7 @@ SINGT.backing_tracks.update = function() {
         track_id = track_entry[0]
         track_name = track_entry[1]
         
-        tracksHtml += '<li class="list-group-item"><img src="./icons/file-music.svg" alt="" width="32" height="32" title="Person" class="mr-2">' + track_name + '</li>';
+        tracksHtml += '<li class="list-group-item"><img src="./icons/file-music.svg" alt="" width="32" height="32" title="Track" class="mr-2">' + track_name + '</li>';
 
         optionsHtml += '<option value="'+track_id+'">'+track_name+'</option>'
     }

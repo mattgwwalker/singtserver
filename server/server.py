@@ -264,8 +264,10 @@ class ServerFactory(protocol.Factory):
     def __init__(self):
         self._shared_context = ServerFactory.SharedContext()
         self._shared_context.eventsource.add_initialiser(
-            "update_participants",
             self.initialiseParticipants
+        )
+        self._shared_context.eventsource.add_initialiser(
+            backing_track_resource.initialise_eventsource
         )
     
     def buildProtocol(self, addr):
@@ -278,7 +280,14 @@ class ServerFactory(protocol.Factory):
         data = {
             "participants": list(self._shared_context.usernames.keys())
         }
-        return json.dumps(data)
+
+        json_data = json.dumps(data)
+
+        d = defer.Deferred()
+        d.callback(("update_participants", json_data))
+        return d
+
+
         
 
 endpoints.serverFromString(reactor, "tcp:1234").listen(ServerFactory())

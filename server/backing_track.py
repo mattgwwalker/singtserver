@@ -160,25 +160,48 @@ class BackingTrack(resource.Resource):
 
         return server.NOT_DONE_YET
 
-    def _publish(self):
-        # Get list of backing tracks from database
-        def get_backing_track_list(cursor):
-            cursor.execute("SELECT * FROM BackingTracks")
-            return cursor.fetchall()
+    def initialise_eventsource(self):
+        def on_error(error):
+            log.error("Failed to initialise backing track list to eventsource:" +str(error))
             
-        d = self._db.dbpool.runInteraction(get_backing_track_list)
+        d = self._get_backing_track_json()
 
+        d.addCallback(lambda data: ("update_backing_tracks", data))
+        d.addErrback(on_error)
+
+        return d
+        
+
+    def _publish(self):
         def publish_results(results):
             # Send out eventsource update on list of backing tracks
             self._eventsource.publish_to_all(
                 "update_backing_tracks",
-                json.dumps(results)
+                results
             )
 
         def on_error(error):
             log.error("Failed to publish backing track list to eventsource:" +str(error))
+            
+        d = self._get_backing_track_json()
 
         d.addCallback(publish_results)
+        d.addErrback(on_error)
+
+        return d
+
+    def _get_backing_track_json(self):
+        # Get list of backing tracks from database
+        def execute_sql(cursor):
+            cursor.execute("SELECT * FROM BackingTracks")
+            results = json.dumps(cursor.fetchall())
+            return results
+            
+        d = self._db.dbpool.runInteraction(execute_sql)
+
+        def on_error(error):
+            log.error("Failed to get backing track list from database:" +str(error))
+
         d.addErrback(on_error)
 
         return d
