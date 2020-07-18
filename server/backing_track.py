@@ -123,7 +123,6 @@ def convert_wav_to_opus(wav_file, opus_filename):
     while True:
         # Get data from the wav file
         pcm = wave_read.readframes(samples_to_read)
-        print(f"read {len(pcm)} bytes")
 
         # Check if we've finished reading the wav file
         if len(pcm) == 0:
