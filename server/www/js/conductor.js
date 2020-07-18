@@ -3,9 +3,7 @@ window.SINGT = {};
 
 
 SINGT.wireup = function(){
-    //all wireup goes here
-
-    console.log('wiring up!');
+    // All wireup goes here
     SINGT.wireup.nav();
     SINGT.wireup.eventsource();
     SINGT.wireup.forms();
@@ -24,7 +22,7 @@ SINGT.wireup.nav = function() {
             $(target_id).addClass('show');
         })
     });
-    //check for hash
+    // Check for hash symbol in address
     var hash = window.location.hash || '#page_tracks';
     hash = hash.split('/')[0]; //allow for splitting has h for multiple uses
     $('a[href="'+hash+'"]').click();
@@ -34,6 +32,7 @@ SINGT.wireup.nav = function() {
 SINGT.wireup.eventsource = function(){
     let eventSource = new EventSource('eventsource');
     eventSource.addEventListener("update_participants", SINGT.participants.update, false);
+    eventSource.addEventListener("update_backing_tracks", SINGT.backing_tracks.update, false);
 };
 
 SINGT.wireup.page_tracks = function(){
@@ -47,7 +46,7 @@ SINGT.wireup.page_tracks = function(){
 
 SINGT.wireup.forms = function() {
     // Connect backing track upload button
-    $("#backing_track_upload").click(SINGT.tracks.upload);
+    $("#backing_track_upload").click(SINGT.backing_tracks.upload);
 
     $("#show_upload_form").click(function(){
         $(this).parent().addClass('d-none');
@@ -92,9 +91,9 @@ SINGT.participants.update = function() {
     
 };
 
-SINGT.tracks = {};
+SINGT.backing_tracks = {};
 
-SINGT.tracks.upload = function() {
+SINGT.backing_tracks.upload = function() {
     console.log("Uploading backing track")
 
     let formData = new FormData();
@@ -140,6 +139,44 @@ SINGT.tracks.upload = function() {
 
     return false;
 }
+
+SINGT.backing_tracks.update = function() {
+    let parsed_data = JSON.parse(event.data);
+
+    if (parsed_data.length == 0) {
+        // There are zero entries in the list of backing tracks
+        $('#zero_tracks').removeClass('d-none');
+        $('#backing_tracks').addClass('d-none');
+
+        let optionsHtml = '<option value="-1">No tracks uploaded</option>';
+        $("#recording_select_tracks").html(optionsHtml).removeClass('d-none');
+        $("#playback_select_tracks").html(optionsHtml).removeClass('d-none');
+        return
+    } 
+
+    // There are more than zero entries in the list of backing tracks
+    $('#zero_tracks').addClass('d-none');
+    $('#backing_tracks').removeClass('d-none');
+    let tracksHtml = '';
+    let optionsHtml = '<option>Choose one</option>';
+
+    // Go through each of the entries and add in a row to the tracks
+    // pages, the recording page, and the playback page
+    for (track_entry of parsed_data) {
+        track_id = track_entry[0]
+        track_name = track_entry[1]
+        
+        tracksHtml += '<li class="list-group-item"><img src="./icons/file-music.svg" alt="" width="32" height="32" title="Person" class="mr-2">' + track_name + '</li>';
+
+        optionsHtml += '<option value="'+track_id+'">'+track_name+'</option>'
+    }
+    $("#backing_tracks").html(tracksHtml).removeClass('d-none');
+    $("#recording_select_tracks").html(optionsHtml).removeClass('d-none');
+    $("#playback_select_tracks").html(optionsHtml).removeClass('d-none');
+};
+
+
+
 $(document).ready(function(){
     SINGT.wireup();
 })

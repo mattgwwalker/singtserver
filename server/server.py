@@ -70,8 +70,7 @@ db_filename = session_dir / "database.sqlite3"
 # Create the database
 database = Database(db_filename)
 
-
-
+# Create the web resources
 file_resource = File("./www/")
 root = file_resource
 
@@ -81,12 +80,12 @@ root.putChild(b"eventsource", eventsource_resource)
 backing_track_resource = BackingTrack(
     uploads_dir,
     backing_track_dir,
-    database
+    database,
+    eventsource_resource
 )
 root.putChild(b"backing_track", backing_track_resource)
 
-#site = server.Site(Simple())
-#site = server.Site(file_resource)
+# Create a web server
 site = server.Site(root)
 reactor.listenTCP(8080, site)
 

@@ -11,8 +11,8 @@ from pyogg import OggOpusWriter
 from twisted.web import server, resource
 
 import sys
-from twisted.logger import Logger, LogLevel, LogLevelFilterPredicate, \
-    textFileLogObserver, FilteringLogObserver, globalLogBeginner
+from twisted.logger import Logger
+
 # Start a logger with a namespace for a particular subsystem of our application.
 log = Logger("backing_track")
 
@@ -20,13 +20,14 @@ log = Logger("backing_track")
 class BackingTrack(resource.Resource):
     isLeaf = True
 
-    def __init__(self, uploads_dir, backing_track_dir, database):
+    def __init__(self, uploads_dir, backing_track_dir, database, eventsource):
         super()
 
         # Assume that directories already exist
         self._uploads_dir = uploads_dir
         self._backing_track_dir = backing_track_dir
         self._db = database
+        self._eventsource = eventsource
 
     def render_POST(self, request):
         request.setResponseCode(201)
@@ -138,7 +139,9 @@ class BackingTrack(resource.Resource):
             }
 
             request.write(json.dumps(msg).encode("utf-8"))
-            request.finish()            
+            self._publish()
+            request.finish()
+
             
         def on_error(data):
             print("in on_error, data:", data)
@@ -157,7 +160,29 @@ class BackingTrack(resource.Resource):
 
         return server.NOT_DONE_YET
 
+    def _publish(self):
+        # Get list of backing tracks from database
+        def get_backing_track_list(cursor):
+            cursor.execute("SELECT * FROM BackingTracks")
+            return cursor.fetchall()
+            
+        d = self._db.dbpool.runInteraction(get_backing_track_list)
 
+        def publish_results(results):
+            # Send out eventsource update on list of backing tracks
+            self._eventsource.publish_to_all(
+                "update_backing_tracks",
+                json.dumps(results)
+            )
+
+        def on_error(error):
+            log.error("Failed to publish backing track list to eventsource:" +str(error))
+
+        d.addCallback(publish_results)
+        d.addErrback(on_error)
+
+        return d
+        
 
 # Validate OggOpus file coming from user.
 # Assume user is passing in temp file handle

@@ -49,7 +49,7 @@ CREATE TABLE Recordings (
 
 
 
-/* Test data 
+/* Test data
 INSERT INTO Participants (participantName)
 VALUES ("Matthew");
 INSERT INTO Participants (participantName)
