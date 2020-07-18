@@ -2,7 +2,6 @@ from enum import Enum
 import json
 import os
 from pathlib import Path
-import random
 import struct
 import subprocess
 import tempfile
@@ -12,9 +11,9 @@ from twisted.internet import defer
 from twisted.internet import task
 from twisted.web import server, resource
 from twisted.web.static import File
-from twisted.enterprise import adbapi
 
-import backing_track
+from backing_track import BackingTrack
+from database import Database
 from eventsource import EventSource
 
 # Setup logging
@@ -68,191 +67,22 @@ backing_track_dir.mkdir(exist_ok=True)
 # Define database filename
 db_filename = session_dir / "database.sqlite3"
 
-# Note if database already exists
-database_exists = db_filename.is_file()
-    
-# Open a connection to the database.  SQLite will create the file if
-# it doesn't already exist.
-dbpool = adbapi.ConnectionPool("sqlite3", db_filename)
-
-# Initialise the database structure from instructions in file
-def initialise_database(cursor):
-    log.info("Initialising database")
-    initialisation_commands_filename = "database.sql"
-    f = open(initialisation_commands_filename, "r")
-    initialisation_commands = f.read()
-    return cursor.executescript(initialisation_commands)
+# Create the database
+database = Database(db_filename)
 
 
-# If the database did not exist, initialise the database
-if not database_exists:
-    print("Database requires initialisation")
-    d = dbpool.runInteraction(initialise_database)
-    def on_success(data):
-        log.info("Database successfully initialised")
-    def on_error(data):
-        log.error("Failed to initialise the database")
-        reactor.stop()
-
-    d.addCallback(on_success)
-    d.addErrback(on_error)
-
-
-
-
-class Simple(resource.Resource):
-    #isLeaf = True
-    def render_GET(self, request):
-        return b"<html>Hello, world!</html>"
 
 file_resource = File("./www/")
-
-
-class BackingTrack(resource.Resource):
-    isLeaf = True
-
-    def __init__(self):
-        super()
-
-        # Check that backing track directory exists
-        
-
-    def render_POST(self, request):
-        request.setResponseCode(201)
-        
-        command = request.args[b"command"][0].decode("utf-8") 
-        print("command:", command)
-
-        name = request.args[b"name"][0].decode("utf-8")
-        print("name:", name)
-
-        # Save file
-        file_contents = request.args[b"file"][0]
-
-        def make_random_filename(ext):
-            return str(random.randint(0, 1e8))+ext
-
-        user_filename = uploads_dir / make_random_filename(".user_upload")
-        user_file = open(user_filename, "wb")
-        user_file.write(file_contents)
-
-        # Open user file for reading.  Previously we were opening the
-        # file just once with the mode 'w+b', but this is incompatible
-        # with reading using Python's wave module.
-        user_file = open(user_filename, "rb")
-        
-        # Check if the file is WAV or Opus or something else
-        first_bytes = user_file.read(4)
-        user_file.seek(0)
-
-        if first_bytes == b"RIFF":
-            print("Uploaded file is a WAV file; need to convert it to Opus")
-            # Attempt to convert the uploaded file to Opus format.
-            # Give the converted file a temporary name, as we won't
-            # have the correct name until it's placed in the database,
-            # and we don't want to do that until we've verified that
-            # the conversion process worked correctly.
-            try:
-                output_filename = uploads_dir / make_random_filename(".opus") 
-                output_file = open(output_filename, "wb")
-                backing_track.convert_wav_to_opus(user_file, output_file)
-                user_file.close()
-            except Exception as e:
-                msg = {
-                    "result":"error",
-                    "reason":(f"Regarding the backing track '{name}', the "+
-                              "uploaded wav file was not able to be "+
-                              "converted to Opus format: "+str(e))
-                }
-                log.warn("Failed to convert user wav file to opus: "+str(e))
-                return json.dumps(msg).encode("utf-8")
-                
-            finally:
-                # Delete the original wav file
-                Path(user_filename).unlink()
-                        
-        elif first_bytes == b"OggS":
-            # Uploaded file is an Ogg Stream, which may be in Opus
-            # format; double-check.
-            try:
-                backing_track.validate_oggopus(user_file)
-            except:
-                msg = {
-                    "result":"error",
-                    "reason":("Regarding the backing track '{:s}', the uploaded ".format(name)+
-                               "Opus file was not able to be read correctly.")
-                }
-                return json.dumps(msg).encode("utf-8")
-            output_file = user_file
-            
-        else:
-            # Delete the original file
-            Path(user_file.name).unlink()
-            
-            log.warn("Uploaded file was neither wav nor Opus")
-            # Inform the user that there was a problem
-            msg = {
-                "result":"error",
-                "reason":("Regarding the backing track '{:s}', the uploaded ".format(name)+
-                           "file was in neither wav nor Opus formats.")
-            }
-            return json.dumps(msg).encode("utf-8")
-        
-        # Add backing track into database
-        def add_backing_track():
-            # TODO: Check that the backing track name hasn't already
-            # been used.
-            def write_to_database(cursor):
-                print("Inserting '{:s}' into backing tracks".format(name))
-                cursor.execute("INSERT INTO BackingTracks(trackName) VALUES (?);", (name,))
-                backing_track_id = cursor.lastrowid
-                return backing_track_id
-            return dbpool.runInteraction(write_to_database)
-            
-        def on_success(backing_track_id):
-            print("in on_success, rowid:", backing_track_id)
-
-            # Rename file
-            desired_filename = backing_track_dir / (str(backing_track_id)+".opus")
-            log.info("Saving uploaded file as '{:s}'".format(str(desired_filename)))
-
-            output_path = Path(output_file.name)
-            output_path.rename(desired_filename)
-
-            # Close the file
-            output_file.close()
-
-            msg = {
-                "result":"success",
-            }
-
-            request.write(json.dumps(msg).encode("utf-8"))
-            request.finish()            
-            
-        def on_error(data):
-            print("in on_error, data:", data)
-            msg = {
-                "result":"error",
-                "reason":str(data)
-            }
-            result = json.dumps(msg).encode("utf-8")
-            print("result:",result)
-            request.write(result)
-            request.finish()
-
-        d = add_backing_track()
-        d.addCallback(on_success)
-        d.addErrback(on_error)
-
-        return server.NOT_DONE_YET
-        
-            
 root = file_resource
 
 eventsource_resource = EventSource()
 root.putChild(b"eventsource", eventsource_resource)
 
-backing_track_resource = BackingTrack()
+backing_track_resource = BackingTrack(
+    uploads_dir,
+    backing_track_dir,
+    database
+)
 root.putChild(b"backing_track", backing_track_resource)
 
 #site = server.Site(Simple())
