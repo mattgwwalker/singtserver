@@ -1,9 +1,9 @@
 import json
+import random
 import struct
 import sys
 import time
 import threading
-import queue
 import wave
 
 import numpy
@@ -16,8 +16,6 @@ from twisted.internet.protocol import DatagramProtocol
 from twisted.internet.protocol import Protocol
 
 from singt.jitter_buffer import JitterBuffer
-
-q = queue.Queue()
 
 class TCPClient(Protocol):
     def __init__(self, name):
@@ -55,18 +53,10 @@ class UDPClient(DatagramProtocol):
     def __init__(self):
         super().__init__()
 
-        # Initialise the decoder
-        self._opus_decoder = OpusDecoder()
-        self._opus_decoder.set_channels(1) # Mono
-        self._opus_decoder.set_sampling_frequency(48000)
-
-        # Initialise the wave_write
-        filename = "out.wav"
-        self._wave_write = wave.open(filename, "wb")
-        self._wave_write.setnchannels(1)
-        self._wave_write.setsampwidth(2)
-        self._wave_write.setframerate(48000)
-
+        # Initialise the jitter buffer
+        packets_to_buffer = 3
+        self._jitter_buffer = JitterBuffer(packets_to_buffer)
+        
     
     def startProtocol(self):
         host = sys.argv[1]
@@ -80,7 +70,7 @@ class UDPClient(DatagramProtocol):
 
         # Open wav file
         #filename = "../left-right-demo-5s.wav"
-        filename = "../gs-16b-2c-44100hz.wav"
+        filename = "../../gs-16b-2c-44100hz.wav"
         wave_read = wave.open(filename, "rb")
         
         # Extract the wav's specification
@@ -142,25 +132,25 @@ class UDPClient(DatagramProtocol):
                 + encoded_packet
             )
 
-            # # TEST: What happens if not all packets are delivered?
-            # if random.random() <= 0:
-            #     # Discard
-            #     print("Discarding")
-            #     pass
-            # elif random.random() <= 0.7:
-            #     # Reorder
-            #     print("Reordering")
-            #     store.append(packet)
-            # else:
-            #     print("Sending")
-            #     # Send
-            #     self.transport.write(packet)
-            #     # Send all stored packets
-            #     for p in random.sample(store, k=len(store)):
-            #         self.transport.write(p)
-            #     store = []
+            # TEST: What happens if not all packets are delivered?
+            if random.random() <= 0:
+                # Discard
+                print("Discarding")
+                pass
+            elif random.random() <= 0.7:
+                # Reorder
+                print("Reordering")
+                store.append(packet)
+            else:
+                print("Sending")
+                # Send
+                self.transport.write(packet)
+                # Send all stored packets
+                for p in random.sample(store, k=len(store)):
+                    self.transport.write(p)
+                store = []
 
-            self.transport.write(packet)
+            #self.transport.write(packet)
 
             sequence_no += 1
 
@@ -176,29 +166,8 @@ class UDPClient(DatagramProtocol):
 
         seq_no = int.from_bytes(seq_no ,"big")
 
-        # Decode the encoded packet
-        pcm = self._opus_decoder.decode(encoded_packet)
-
-        # Write the PCM to the wav file
-        self._wave_write.writeframes(pcm)
-
-        # Convert the data to floating point
-        pcm_int16 = numpy.frombuffer(
-            pcm,
-            dtype = numpy.int16
-        )
-
-        # DEBUG
-        #print("pcm:", pcm[0:10])
-        #print("pcm_int16:", pcm_int16[0:5])
-        #assert pcm[0] == pcm_int16[0]
+        self._jitter_buffer.put_packet(seq_no, encoded_packet)
         
-        pcm_float = pcm_int16.astype(numpy.float32)
-        pcm_float /= 2**15
-        pcm_float = numpy.reshape(pcm_float, (len(pcm_float), 1))
-        #print("pcm_float:", pcm_float[0:5])
-
-        q.put_nowait(pcm_float)
 
         
     # Possibly invoked if there is no server listening on the
@@ -209,39 +178,63 @@ class UDPClient(DatagramProtocol):
 
 # Create output stream
 buf = None
+global_jitter_buffer = None
+global_opus_decoder = OpusDecoder()
+global_opus_decoder.set_channels(1) # Mono
+global_opus_decoder.set_sampling_frequency(48000)
+started = False
 def callback(outdata, frames, time, status):
-    global buf 
+    global buf
+    global global_jitter_buffer
+    global global_opus_decoder
+    global started
 
-    # Attempt to get data from queue
-    while True:
-        try:
-            pcm = q.get_nowait()
-        except queue.Empty:
-            break
+    def decode_next_packet():
+        global buf
+        global global_jitter_buffer
+        global started
+        
+        encoded_packet = global_jitter_buffer.get_packet()
 
-        # Push data to buf
-        if buf is None:
-            buf = pcm
+        if encoded_packet is not None:
+            # Decode the encoded packet
+            pcm = global_opus_decoder.decode(encoded_packet)
+            started = True
         else:
-            buf = numpy.concatenate((buf, pcm))
+            # Accept that we're missing the packet
+            if started:
+                assumed_frame_duration = 20 # milliseconds FIXME
+                print("WARNING Missing packet")
+                pcm = global_opus_decoder.decode_missing_packet(assumed_frame_duration)
+            else:
+                # We haven't even started, just output silence
+                outdata.fill(0)
+                return
 
-    # If there's no data in the buf, fill the output with zeros
-    if buf is None:
-        print("WARNING No data in buffer")
-        outdata.fill(0)
-        return
+        # Convert the data to floating point
+        pcm_int16 = numpy.frombuffer(
+            pcm,
+            dtype = numpy.int16
+        )
 
-    # If there's some data, but not enough, take what's available and
-    # fill the rest with zeros.
-    if len(buf) < frames:
-        print("WARNING Insufficient data in buffer")
-        outdata[:len(buf)] = buf[:]
-        outdata[len(buf):].fill(0)
-        buf = None
-        return
+        pcm_float = pcm_int16.astype(numpy.float32)
+        pcm_float /= 2**15
+        pcm_float = numpy.reshape(pcm_float, (len(pcm_float), 1))
+            
+        # Concatenate data to buf
+        if buf is None:
+            buf = pcm_float
+        else:
+            buf = numpy.concatenate((buf, pcm_float))
 
-    # Otherwise, if there's more than enough data, copy all that's
-    # needed and remove that much from the buffer.
+
+    # If there's insufficient data in buf attempt to obtain it
+    # from the jitter buffer
+    while buf is None or len(buf) < frames:
+        decode_next_packet()
+
+    # Copy the data from the buffer remove from the buffer than which
+    # we used.
     outdata[:] = buf[:frames]
     buf = buf[frames:]
 
@@ -275,7 +268,9 @@ if __name__=="__main__":
     # ===
 
     # 0 means any port, we don't care in this case
-    reactor.listenUDP(0, UDPClient())
+    udp_client = UDPClient()
+    global_jitter_buffer = udp_client._jitter_buffer # HACK
+    reactor.listenUDP(0, udp_client)
 
     
     print("Running reactor")

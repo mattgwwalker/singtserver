@@ -1,3 +1,36 @@
+import threading
+
+class JitterBuffer:
+    def __init__(self, buffer_length=3):
+        self._buffer_lock = threading.RLock()
+
+        with self._buffer_lock:
+            self._buffer = [None] * buffer_length
+    
+    def put_packet(self, sequence_number, packet):
+        with self._buffer_lock:
+            self._buffer.append(packet)
+        
+    def get_packet(self):
+        with self._buffer_lock:
+            # If the buffer is empty, return None
+            if len(self._buffer) == 0:
+                return None
+
+            # Otherwise, return the first item after updating the buffer
+            packet = self._buffer[0]
+
+            if len(self._buffer) == 1:
+                self._buffer = []
+            else:
+                self._buffer = self._buffer[1:]
+
+            return packet
+
+
+# OLD IMPLEMENTATION BELOW
+
+
 # Jitter Buffer
 # =============
 
@@ -9,7 +42,7 @@
 # the expected sequence number, it is decoded and placed into the
 # PCM buffer.
 
-class JitterBuffer:
+class OLDJitterBuffer:
     # The maximum
     # length of an Opus frame is 120ms (see
     # https://tools.ietf.org/html/rfc6716).
