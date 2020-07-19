@@ -5,16 +5,41 @@ class JitterBuffer:
         self._buffer_lock = threading.RLock()
 
         with self._buffer_lock:
+            self._expected_seq_no = None
             self._buffer = [None] * buffer_length
-    
+            self._out_of_order_packets = {}
+
+            
     def put_packet(self, sequence_number, packet):
         with self._buffer_lock:
-            self._buffer.append(packet)
+            # If we don't know the expected sequence number, then just
+            # use whatever we've received
+            if self._expected_seq_no is None:
+                self._expected_seq_no = sequence_number
+
+            # If this sequence number is the expected one then just
+            # append it to the buffer
+            if self._expected_seq_no == sequence_number:
+                self._buffer.append(packet)
+                self._expected_seq_no += 1
+
+                # Check the out-of-order dictionary, maybe the next
+                # packet is already waiting
+                self._check_out_of_order_packets()
+                
+            else:
+                # We have an out-of-order packet.  Add it to the
+                # dictionary
+                self._out_of_order_packets[sequence_number] = packet
+
         
     def get_packet(self):
         with self._buffer_lock:
-            # If the buffer is empty, return None
+            # If the buffer is empty, give up on the currently
+            # expected sequence number and return None
             if len(self._buffer) == 0:
+                self._expected_seq_no += 1
+                self._check_out_of_order_packets()
                 return None
 
             # Otherwise, return the first item after updating the buffer
@@ -26,6 +51,15 @@ class JitterBuffer:
                 self._buffer = self._buffer[1:]
 
             return packet
+
+        
+    def _check_out_of_order_packets(self):
+        while self._expected_seq_no in self._out_of_order_packets:
+            oo_packet = self._out_of_order_packets[self._expected_seq_no]
+            self._buffer.append(oo_packet)
+            del self._out_of_order_packets[self._expected_seq_no]
+            self._expected_seq_no += 1
+        
 
 
 # OLD IMPLEMENTATION BELOW
