@@ -1,6 +1,7 @@
 *~
 \#*\#
 *.wav
+*.opus
 .DS_Store
 __pycache__/
 application.log
