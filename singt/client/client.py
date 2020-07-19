@@ -15,6 +15,8 @@ from twisted.internet.endpoints import TCP4ClientEndpoint, connectProtocol
 from twisted.internet.protocol import DatagramProtocol
 from twisted.internet.protocol import Protocol
 
+from singt.jitter_buffer import JitterBuffer
+
 q = queue.Queue()
 
 class TCPClient(Protocol):
