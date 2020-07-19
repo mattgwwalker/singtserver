@@ -2,14 +2,20 @@ import json
 import struct
 import sys
 import time
+import threading
+import queue
 import wave
 
+import numpy
 from pyogg import OpusEncoder
 from pyogg import OpusDecoder
+import sounddevice as sd
 from twisted.internet import reactor
 from twisted.internet.endpoints import TCP4ClientEndpoint, connectProtocol
 from twisted.internet.protocol import DatagramProtocol
 from twisted.internet.protocol import Protocol
+
+q = queue.Queue()
 
 class TCPClient(Protocol):
     def __init__(self, name):
@@ -28,7 +34,8 @@ class TCPClient(Protocol):
 
     def connectionLost(self, reason):
         print("Connection lost:", reason)
-        reactor.stop()
+        if reactor.running:
+            reactor.stop()
         
     def sendMessage(self, msg):
         msg_as_bytes = msg.encode("utf-8")
@@ -70,7 +77,8 @@ class UDPClient(DatagramProtocol):
         store = []
 
         # Open wav file
-        filename = "../left-right-demo-5s.wav"
+        #filename = "../left-right-demo-5s.wav"
+        filename = "../gs-16b-2c-44100hz.wav"
         wave_read = wave.open(filename, "rb")
         
         # Extract the wav's specification
@@ -156,7 +164,7 @@ class UDPClient(DatagramProtocol):
 
             
     def datagramReceived(self, data, addr):
-        print("Received UDP packet from", addr)
+        #print("Received UDP packet from", addr)
 
         # Extract the timestamp (4 bytes), sequence number (2 bytes),
         # and encoded frame (remainder)
@@ -165,7 +173,6 @@ class UDPClient(DatagramProtocol):
         encoded_packet = data[6:]
 
         seq_no = int.from_bytes(seq_no ,"big")
-        print("\n",seq_no)
 
         # Decode the encoded packet
         pcm = self._opus_decoder.decode(encoded_packet)
@@ -173,12 +180,77 @@ class UDPClient(DatagramProtocol):
         # Write the PCM to the wav file
         self._wave_write.writeframes(pcm)
 
+        # Convert the data to floating point
+        pcm_int16 = numpy.frombuffer(
+            pcm,
+            dtype = numpy.int16
+        )
+
+        # DEBUG
+        #print("pcm:", pcm[0:10])
+        #print("pcm_int16:", pcm_int16[0:5])
+        #assert pcm[0] == pcm_int16[0]
+        
+        pcm_float = pcm_int16.astype(numpy.float32)
+        pcm_float /= 2**15
+        pcm_float = numpy.reshape(pcm_float, (len(pcm_float), 1))
+        #print("pcm_float:", pcm_float[0:5])
+
+        q.put_nowait(pcm_float)
+
+        
     # Possibly invoked if there is no server listening on the
     # address to which we are sending.
     def connectionRefused(self):
         print("No one listening")
 
-        
+
+# Create output stream
+buf = None
+def callback(outdata, frames, time, status):
+    global buf 
+
+    # Attempt to get data from queue
+    while True:
+        try:
+            pcm = q.get_nowait()
+        except queue.Empty:
+            break
+
+        # Push data to buf
+        if buf is None:
+            buf = pcm
+        else:
+            buf = numpy.concatenate((buf, pcm))
+
+    # If there's no data in the buf, fill the output with zeros
+    if buf is None:
+        print("WARNING No data in buffer")
+        outdata.fill(0)
+        return
+
+    # If there's some data, but not enough, take what's available and
+    # fill the rest with zeros.
+    if len(buf) < frames:
+        print("WARNING Insufficient data in buffer")
+        outdata[:len(buf)] = buf[:]
+        outdata[len(buf):].fill(0)
+        buf = None
+        return
+
+    # Otherwise, if there's more than enough data, copy all that's
+    # needed and remove that much from the buffer.
+    outdata[:] = buf[:frames]
+    buf = buf[frames:]
+
+    
+stream = sd.OutputStream(
+    samplerate = 48000,
+    channels = 1,
+    dtype = numpy.float32,
+    latency = 100/1000,
+    callback = callback
+)
     
 if __name__=="__main__":
     print("What is your name?")
@@ -205,5 +277,6 @@ if __name__=="__main__":
 
     
     print("Running reactor")
-    reactor.run()
+    with stream:
+        reactor.run()
 
