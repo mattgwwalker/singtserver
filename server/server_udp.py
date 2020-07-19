@@ -19,6 +19,9 @@ class RecvOpusStream(DatagramProtocol):
     def datagramReceived(self, data, addr):
         print("Received UDP packet from", addr)
 
+        self.transport.write(data, addr)
+        return
+
         # Extract the timestamp (4 bytes), sequence number (2 bytes),
         # and encoded frame (remainder)
         timestamp = data[0:4]
