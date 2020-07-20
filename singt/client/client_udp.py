@@ -195,17 +195,20 @@ class UDPClient(DatagramProtocol):
         # Jitter buffer is thread safe
         jitter_buffer = self._jitter_buffer
 
+        samples_per_second = 48000 # FIXME
+        frame_size_ms = 20 # ms FIXME
+        
         # OpusDecoder dedicated to callback
         opus_decoder = OpusDecoder()
-        opus_decoder.set_sampling_frequency(48000) #FIXME
+        opus_decoder.set_sampling_frequency(samples_per_second)
         opus_decoder.set_channels(1) #FIXME
 
         # OpusBufferedEncoder dedicated to callback
         opus_encoder = OpusBufferedEncoder()
         opus_encoder.set_application("audio")
-        opus_encoder.set_sampling_frequency(48000) #FIXME
+        opus_encoder.set_sampling_frequency(samples_per_second)
         opus_encoder.set_channels(1) #FIXME
-        opus_encoder.set_frame_size(20) # ms
+        opus_encoder.set_frame_size(frame_size_ms) # ms
         
         # PCM buffer dedicated to callback
         buf = None
@@ -256,14 +259,14 @@ class UDPClient(DatagramProtocol):
                 else:
                     # Accept that we're missing the packet
                     if started:
-                        assumed_frame_duration = 20 # milliseconds FIXME
                         print("WARNING Missing packet")
-                        pcm = opus_decoder.decode_missing_packet(assumed_frame_duration)
+                        pcm = opus_decoder.decode_missing_packet(frame_size_ms)
                     else:
                         # We haven't even started, just output silence
-                        print("Haven't even started, just output silence")
-                        return numpy.zeros(outdata.shape)
-
+                        print("Haven't even started, return silence")
+                        channels = outdata.shape[1]
+                        samples = frame_size_ms * samples_per_second // 1000
+                        pcm = numpy.zeros((samples, channels), dtype=numpy.int16)
 
                 # Convert the data to floating point
                 pcm_int16 = numpy.frombuffer(
@@ -275,6 +278,14 @@ class UDPClient(DatagramProtocol):
                 pcm_float /= 2**15
                 pcm_float = numpy.reshape(pcm_float, (len(pcm_float), 1))
 
+                # DEBUG
+                if pcm_float.shape[0] != frame_size_ms * samples_per_second // 1000:
+                    print("FAIL Frame size isn't the desired duration ***********************************************")
+                    print(f"It's first dimension is {pcm_float.shape[0]}.")
+
+                if pcm_float.shape[1] != 1: # channels
+                    print("FAIL Frame size isn't the correct number of channels")
+                
                 return pcm_float
 
             # If there's insufficient data in buf attempt to obtain it

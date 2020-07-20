@@ -1,3 +1,4 @@
+import collections
 import threading
 
 # FIXME We still need to deal with sequence numbers that have
@@ -9,16 +10,30 @@ class JitterBuffer:
 
         with self._buffer_lock:
             self._expected_seq_no = None
-            self._buffer = [None] * buffer_length
+            self._buffer = collections.deque()
             self._out_of_order_packets = {}
             
             # The value at which sequence numbers roll back to zero
             self._seq_no_rollover = 2**16
 
+            # Only after the first packet has been 'put' do we allow
+            # gets
+            self._started = False
+
+            # Fill the buffer with None's up to the given buffer
+            # length
+            for _ in range(buffer_length):
+                self._buffer.append(None)
+
+            self._missed_packets = 0
+            
             
     def put_packet(self, seq_no, packet):
         with self._buffer_lock:
-            print(f"jitter buffer recv'd packet number {seq_no}")
+            print(f"jitter buffer recv'd packet number {seq_no} (buffer contains {self._get_buffer_size()} items)")
+
+            self._started = True
+            
             # If we don't know the expected sequence number, then just
             # use whatever we've received
             if self._expected_seq_no is None:
@@ -56,25 +71,28 @@ class JitterBuffer:
         
     def get_packet(self):
         with self._buffer_lock:
-            print("getting packet from jitter buffer")
+            print(f"getting packet from jitter buffer (which contains {self._get_buffer_size()} items)")
+
+            if not self._started:
+                print("We haven't received our first packet; ignoring get request")
+                return None
+            
             # If the buffer is empty, give up on the currently
             # expected sequence number and return None
             if len(self._buffer) == 0:
-                print(f"jitter buffer is giving up on the expected packet number {self._expected_seq_no}")
-                if self._expected_seq_no is not None:
-                    self._expected_seq_no += 1
+                self._missed_packets += 1
+                print(f"jitter buffer is giving up on the expected packet number {self._expected_seq_no} (total of {self._missed_packets} packets missed)")
+                self._expected_seq_no += 1
                 self._check_out_of_order_packets()
                 return None
 
-            # Otherwise, return the first item after updating the buffer
-            packet = self._buffer[0]
-
-            if len(self._buffer) == 1:
-                self._buffer = []
-            else:
-                self._buffer = self._buffer[1:]
-
+            # Otherwise, return the first item
+            packet = self._buffer.popleft()
             return packet
+
+        
+    def _get_buffer_size(self):
+        return len(self._buffer) + len(self._out_of_order_packets)
 
         
     def _check_out_of_order_packets(self):
