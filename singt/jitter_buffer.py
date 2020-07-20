@@ -11,30 +11,47 @@ class JitterBuffer:
             self._expected_seq_no = None
             self._buffer = [None] * buffer_length
             self._out_of_order_packets = {}
+            
+            # The value at which sequence numbers roll back to zero
+            self._seq_no_rollover = 2**16
 
             
-    def put_packet(self, sequence_number, packet):
+    def put_packet(self, seq_no, packet):
         with self._buffer_lock:
-            print(f"jitter buffer recv'd packet number {sequence_number}")
+            print(f"jitter buffer recv'd packet number {seq_no}")
             # If we don't know the expected sequence number, then just
             # use whatever we've received
             if self._expected_seq_no is None:
-                self._expected_seq_no = sequence_number
+                self._expected_seq_no = seq_no
 
             # If this sequence number is the expected one then just
             # append it to the buffer
-            if self._expected_seq_no == sequence_number:
+            if self._expected_seq_no == seq_no:
                 self._buffer.append(packet)
                 self._expected_seq_no += 1
+                self._expected_seq_no %= self._seq_no_rollover
 
                 # Check the out-of-order dictionary, maybe the next
                 # packet is already waiting
                 self._check_out_of_order_packets()
                 
             else:
-                # We have an out-of-order packet.  Add it to the
-                # dictionary
-                self._out_of_order_packets[sequence_number] = packet
+                # We have an out-of-order packet.  Check if it's
+                # before or after the expected sequence number
+                distance = self._calc_distance(
+                    seq_no,
+                    self._expected_seq_no
+                )
+                print("distance:",distance)
+
+                # Check if the frame is too late
+                if distance >= 0:
+                    # Add it to the dictionary
+                    print("Frame is ahead of what we were expecting; storing")
+                    self._out_of_order_packets[seq_no] = packet
+                else:
+                    print("Frame is behind what we were expecting; discarding")
+                    return
 
         
     def get_packet(self):
@@ -68,6 +85,26 @@ class JitterBuffer:
                 del self._out_of_order_packets[self._expected_seq_no]
                 self._expected_seq_no += 1
         
+
+    # Calculates most likely distance between two sequence numbers
+    # given that they may have rolledover.
+    def _calc_distance(self, new, current):
+        adjusted_new = new + self._seq_no_rollover
+        adjusted_current = current + self._seq_no_rollover
+
+        distance = new - current
+
+        def assess(n,c):
+            if abs(n-c) < abs(distance):
+                return n-c
+            else:
+                return distance
+
+        distance = assess(adjusted_new, current)
+        distance = assess(adjusted_new, adjusted_current)
+        distance = assess(new, adjusted_current)
+
+        return distance
 
 
 # OLD IMPLEMENTATION BELOW

@@ -6,6 +6,7 @@ import numpy
 from pyogg import OpusEncoder
 from pyogg import OpusBufferedEncoder
 from pyogg import OpusDecoder
+from twisted.internet import reactor
 from twisted.internet import task
 from twisted.internet.protocol import DatagramProtocol
 import sounddevice as sd
@@ -28,8 +29,11 @@ class UDPClient(DatagramProtocol):
         # Start with sequence number zero
         self._sequence_no = 0
 
-        # Create an OutputStream
-        self._stream = sd.OutputStream(
+        # Maximum sequence number before rollover
+        self._sequence_no_max = 2**16
+
+        # Create a Stream
+        self._stream = sd.Stream(
             samplerate = 48000,
             channels = 1,
             dtype = numpy.float32,
@@ -57,7 +61,7 @@ class UDPClient(DatagramProtocol):
 
         store = []
 
-        self._send_file()
+        #self._send_file()
 
 
     def sendEncodedPacket(self, encoded_packet):
@@ -75,6 +79,7 @@ class UDPClient(DatagramProtocol):
         print(f"client_udp: sent sequence no {self._sequence_no}")
         
         self._sequence_no += 1
+        self._sequence_no %= self._sequence_no_max
 
         
     def datagramReceived(self, data, addr):
@@ -195,6 +200,12 @@ class UDPClient(DatagramProtocol):
         opus_decoder.set_sampling_frequency(48000) #FIXME
         opus_decoder.set_channels(1) #FIXME
 
+        # OpusBufferedEncoder dedicated to callback
+        opus_encoder = OpusBufferedEncoder()
+        opus_encoder.set_application("audio")
+        opus_encoder.set_sampling_frequency(48000) #FIXME
+        opus_encoder.set_channels(1) #FIXME
+        opus_encoder.set_frame_size(20) # ms
         
         # PCM buffer dedicated to callback
         buf = None
@@ -202,7 +213,7 @@ class UDPClient(DatagramProtocol):
         # Started flag dedicated to callback
         started = False
         
-        def callback(outdata, frames, time, status):
+        def callback(indata, outdata, frames, time, status):
             nonlocal jitter_buffer
             nonlocal buf
             nonlocal started
@@ -211,13 +222,30 @@ class UDPClient(DatagramProtocol):
             
             if status:
                 print(status)
+
+            # Input
+            # =====
+
+            if indata is None:
+                print("************************ indata is None ***************")
+            # Convert from float32 to int16
+            indata_int16 = indata * (2**15-1)
+            indata_int16 = indata_int16.astype(numpy.int16)
+            encoded_packets = opus_encoder.encode(indata_int16.tobytes())
+
+            # Send the encoded packets.  Make such not to call from
+            #this thread.
+            for encoded_packet in encoded_packets:
+                reactor.callFromThread(self.sendEncodedPacket,
+                                       encoded_packet)
                 
+            # Output
+            # ======
+            
             def decode_next_packet():
                 nonlocal started
 
                 #print("in decode_next_packet")
-                # Output
-                # ======
 
                 encoded_packet = jitter_buffer.get_packet()
 
