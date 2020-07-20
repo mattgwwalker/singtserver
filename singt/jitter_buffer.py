@@ -1,5 +1,8 @@
 import threading
 
+# FIXME We still need to deal with sequence numbers that have
+# overflowed.
+
 class JitterBuffer:
     def __init__(self, buffer_length=3):
         self._buffer_lock = threading.RLock()
@@ -12,6 +15,7 @@ class JitterBuffer:
             
     def put_packet(self, sequence_number, packet):
         with self._buffer_lock:
+            print(f"jitter buffer recv'd packet number {sequence_number}")
             # If we don't know the expected sequence number, then just
             # use whatever we've received
             if self._expected_seq_no is None:
@@ -35,10 +39,13 @@ class JitterBuffer:
         
     def get_packet(self):
         with self._buffer_lock:
+            print("getting packet from jitter buffer")
             # If the buffer is empty, give up on the currently
             # expected sequence number and return None
             if len(self._buffer) == 0:
-                self._expected_seq_no += 1
+                print(f"jitter buffer is giving up on the expected packet number {self._expected_seq_no}")
+                if self._expected_seq_no is not None:
+                    self._expected_seq_no += 1
                 self._check_out_of_order_packets()
                 return None
 
@@ -54,11 +61,12 @@ class JitterBuffer:
 
         
     def _check_out_of_order_packets(self):
-        while self._expected_seq_no in self._out_of_order_packets:
-            oo_packet = self._out_of_order_packets[self._expected_seq_no]
-            self._buffer.append(oo_packet)
-            del self._out_of_order_packets[self._expected_seq_no]
-            self._expected_seq_no += 1
+        with self._buffer_lock:
+            while self._expected_seq_no in self._out_of_order_packets:
+                oo_packet = self._out_of_order_packets[self._expected_seq_no]
+                self._buffer.append(oo_packet)
+                del self._out_of_order_packets[self._expected_seq_no]
+                self._expected_seq_no += 1
         
 
 
