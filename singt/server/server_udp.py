@@ -1,11 +1,13 @@
+import struct
 import wave
 
 import pyogg
 from twisted.internet.protocol import DatagramProtocol
+from twisted.logger import Logger
 
-# Open UDP connection
-# Send frames to OpusDecoder
-# Save as wav
+# Start a logger with a namespace for a particular subsystem of our application.
+log = Logger("backing_track")
+
 
 class RecvOpusStream(DatagramProtocol):
     def __init__(self):
@@ -17,15 +19,14 @@ class RecvOpusStream(DatagramProtocol):
         
     
     def datagramReceived(self, data, addr):
-        print("Received UDP packet from", addr)
+        #print("Received UDP packet from", addr)
 
         self.transport.write(data, addr)
         return
 
         # Extract the timestamp (4 bytes), sequence number (2 bytes),
         # and encoded frame (remainder)
-        timestamp = data[0:4]
-        seq_no = data[4:6]
+        timestamp, seq_no = struct.unpack(">IH", data[0:6])
         encoded_packet = data[6:]
 
         seq_no = int.from_bytes(seq_no ,"big")
