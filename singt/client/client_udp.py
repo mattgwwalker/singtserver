@@ -132,10 +132,10 @@ class UDPClient(UDPClientBase):
             indata_int16 = indata_int16.astype(numpy.int16)
             encoded_packets = opus_encoder.encode(indata_int16.tobytes())
 
-            # Send the encoded packets.  Make such not to call from
-            #this thread.
+            # Send the encoded packets.  Make sure not to call from
+            # this thread.
             for encoded_packet in encoded_packets:
-                reactor.callFromThread(self.sendEncodedPacket,
+                reactor.callFromThread(self._udp_packetizer.write,
                                        encoded_packet)
                 
             # Output
