@@ -33,11 +33,16 @@ if __name__=="__main__":
     # ===
 
     # 0 means any port, we don't care in this case
-    udp_client = UDPClientTester(address, 12345, f"out-{tester_id}.wav")
+    in_filename = "../../gs-16b-2c-44100hz.wav"
+    out_filename = f"out-{tester_id}.wav"
+    udp_client = UDPClientTester(
+        address, 12345,
+        in_filename,
+        out_filename
+    )
     
 
-    filename = "../../gs-16b-2c-44100hz.wav"
-    reactor.callWhenRunning(udp_client.send_file, filename)
+    #reactor.callWhenRunning(udp_client.send_file, filename)
     reactor.callWhenRunning(udp_client.start_audio_processing_loop)
     reactor.listenUDP(0, udp_client)
 
