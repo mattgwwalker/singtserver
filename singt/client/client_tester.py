@@ -13,7 +13,8 @@ from singt.client.client_udp import UDPClientTester
     
 if __name__=="__main__":
     # Create a name for this tester
-    name = "Singt Client Tester #" + str(random.randint(0,1000))
+    tester_id = str(random.randint(0,1000))
+    name = "Singt Client Tester #" + tester_id
 
     # TCP
     # ===
@@ -32,10 +33,12 @@ if __name__=="__main__":
     # ===
 
     # 0 means any port, we don't care in this case
-    udp_client = UDPClientTester(address, 12345)
+    udp_client = UDPClientTester(address, 12345, f"out-{tester_id}.wav")
+    
 
     filename = "../../gs-16b-2c-44100hz.wav"
     reactor.callWhenRunning(udp_client.send_file, filename)
+    reactor.callWhenRunning(udp_client.start_audio_processing_loop)
     reactor.listenUDP(0, udp_client)
 
     # Reactor

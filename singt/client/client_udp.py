@@ -9,6 +9,7 @@ from pyogg import OpusDecoder
 from twisted.internet import reactor
 from twisted.internet import task
 from twisted.internet.protocol import DatagramProtocol
+from twisted.internet.task import LoopingCall
 import sounddevice as sd
 
 from singt.jitter_buffer import JitterBuffer
@@ -77,6 +78,7 @@ class UDPClient(UDPClientBase):
         # Start the audio stream
         self._stream.start()
 
+        
         
     def __del__(self):
         # Shutdown the audio stream
@@ -202,6 +204,80 @@ class UDPClient(UDPClientBase):
 
 
 class UDPClientTester(UDPClientBase):
+    def __init__(self, host, port, filename):
+        super().__init__(host, port)
+        self._wave_write = None
+
+        # Have we started receiving data from the jitter buffer
+        self._started = False 
+
+        # Open file for writing
+        samples_per_second = 48000
+        
+        print(f"Opening file '{filename}' for writing as wave file") 
+        self._wave_write = wave.open(filename, "wb")
+        self._wave_write.setnchannels(1) # FIXME
+        self._wave_write.setsampwidth(2) # FIXME
+        self._wave_write.setframerate(48000) # FIXME
+
+        self._opus_decoder = OpusDecoder()
+        self._opus_decoder.set_sampling_frequency(samples_per_second)
+        self._opus_decoder.set_channels(1) #FIXME
+
+    def process_audio_frame(self, count):
+        start_time = time.time()
+        print("In process_audio_frame()  count:",count)
+
+        samples_per_second = 48000 # FIXME
+        frame_size_ms = 20 # FIXME
+        
+        # Repeat count times
+        for _ in range(count):
+            # Get next packet form jitter buffer
+            encoded_packet = self._jitter_buffer.get_packet()
+
+            # Decode packet
+            if encoded_packet is not None:
+                # Decode the encoded packet
+                pcm = self._opus_decoder.decode(encoded_packet)
+                self._started = True
+            else:
+                # Accept that we're missing the packet
+                if self._started:
+                    print("WARNING Missing packet")
+                    pcm = self._opus_decoder.decode_missing_packet(frame_size_ms)
+                else:
+                    # We haven't even started, just output silence
+                    print("Haven't even started, return silence")
+                    channels = 1 # FIXME
+                    samples = frame_size_ms * samples_per_second // 1000
+                    pcm = numpy.zeros((samples, channels), dtype=numpy.int16)
+
+            # Save PCM into wave file
+            self._wave_write.writeframes(pcm)
+
+        end_time = time.time()
+        print(f"process_audio_frame() duration: {round((end_time-start_time)*1000)} ms")
+
+        
+    def start_audio_processing_loop(self, interval=20/1000):
+        looping_call = LoopingCall.withCount(self.process_audio_frame)
+
+        d = looping_call.start(interval)
+
+        def on_stop(data):
+            print("The audio processing loop was stopped")
+            
+        def on_error(data):
+            print("ERROR: An error occurred during the audio processing loop:", data)
+            raise Exception("An error occurred during the audio processing loop:" + str(data))
+
+        d.addCallback(on_stop)
+        d.addErrback(on_error)
+
+        return d
+
+    
     def send_file(self, filename):
         # Open wav file
         wave_read = wave.open(filename, "rb")
