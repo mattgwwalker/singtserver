@@ -4,6 +4,6 @@
 *.opus
 .DS_Store
 __pycache__/
-application.log
+*.log
 database.sqlite3
 session_files/

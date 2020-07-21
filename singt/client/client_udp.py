@@ -132,10 +132,10 @@ class UDPClient(UDPClientBase):
             indata_int16 = indata_int16.astype(numpy.int16)
             encoded_packets = opus_encoder.encode(indata_int16.tobytes())
 
-            # Send the encoded packets.  Make such not to call from
-            #this thread.
+            # Send the encoded packets.  Make sure not to call from
+            # this thread.
             for encoded_packet in encoded_packets:
-                reactor.callFromThread(self.sendEncodedPacket,
+                reactor.callFromThread(self._udp_packetizer.write,
                                        encoded_packet)
                 
             # Output
@@ -204,18 +204,18 @@ class UDPClient(UDPClientBase):
 
 
 class UDPClientTester(UDPClientBase):
-    def __init__(self, host, port, filename):
+    def __init__(self, host, port, in_filename, out_filename):
         super().__init__(host, port)
-        self._wave_write = None
 
         # Have we started receiving data from the jitter buffer
         self._started = False 
 
         # Open file for writing
         samples_per_second = 48000
-        
-        print(f"Opening file '{filename}' for writing as wave file") 
-        self._wave_write = wave.open(filename, "wb")
+
+        # Output
+        print(f"Opening file '{out_filename}' for writing as wave file") 
+        self._wave_write = wave.open(out_filename, "wb")
         self._wave_write.setnchannels(1) # FIXME
         self._wave_write.setsampwidth(2) # FIXME
         self._wave_write.setframerate(48000) # FIXME
@@ -224,6 +224,9 @@ class UDPClientTester(UDPClientBase):
         self._opus_decoder.set_sampling_frequency(samples_per_second)
         self._opus_decoder.set_channels(1) #FIXME
 
+        # Input
+        self._send_packet_generator = self._get_send_packet_generator(in_filename)
+        
     def process_audio_frame(self, count):
         start_time = time.time()
         print("In process_audio_frame()  count:",count)
@@ -233,7 +236,18 @@ class UDPClientTester(UDPClientBase):
         
         # Repeat count times
         for _ in range(count):
-            # Get next packet form jitter buffer
+            # Send packets
+            # ============
+            try:
+                next(self._send_packet_generator)
+            except StopIteration:
+                pass
+            
+            
+            # Received Packets
+            # ================
+            
+            # Get next packet from jitter buffer
             encoded_packet = self._jitter_buffer.get_packet()
 
             # Decode packet
@@ -278,7 +292,7 @@ class UDPClientTester(UDPClientBase):
         return d
 
     
-    def send_file(self, filename):
+    def _get_send_packet_generator(self, filename):
         # Open wav file
         wave_read = wave.open(filename, "rb")
         
@@ -358,8 +372,4 @@ class UDPClientTester(UDPClientBase):
                 #     store = []
             print(f"Finished sending '{filename}'")
 
-        # Install as cooperative task
-        
-        cooperative_task = task.cooperate(send_packets())
-
-        return cooperative_task.whenDone()
+        return send_packets()
