@@ -9,13 +9,14 @@ from pyogg import OpusDecoder
 from twisted.internet import reactor
 from twisted.internet import task
 from twisted.internet.protocol import DatagramProtocol
+from twisted.internet.task import LoopingCall
 import sounddevice as sd
 
 from singt.jitter_buffer import JitterBuffer
+from singt.udp_packetizer import UDPPacketizer
 
 
-# Open opus file and send it to server
-class UDPClient(DatagramProtocol):
+class UDPClientBase(DatagramProtocol):
     def __init__(self, host, port):
         super().__init__()
 
@@ -25,12 +26,45 @@ class UDPClient(DatagramProtocol):
         # Initialise the jitter buffer
         packets_to_buffer = 3
         self._jitter_buffer = JitterBuffer(packets_to_buffer)
+        self._udp_packetizer = None
 
-        # Start with sequence number zero
-        self._sequence_no = 0
+        
+    def startProtocol(self):
+        # "Connect" this to the server
+        self.transport.connect(
+            self._host,
+            self._port
+        )
 
-        # Maximum sequence number before rollover
-        self._sequence_no_max = 2**16
+        # Initialise UDP Packetizer
+        self._udp_packetizer = UDPPacketizer(
+            self.transport,
+            (self._host, self._port)
+        )
+
+
+    def datagramReceived(self, data, addr):
+        #print("Received UDP packet from", addr)
+
+        # Extract the timestamp, sequence number, and encoded frame
+        timestamp, seq_no, encoded_packet = self._udp_packetizer.decode(data)
+
+        # Put the encoded packet in the jitter buffer
+        self._jitter_buffer.put_packet(seq_no, encoded_packet)
+
+                
+    # Possibly invoked if there is no server listening on the
+    # address to which we are sending.
+    def connectionRefused(self):
+        print("No one listening; stopping")
+        if reactor.running:
+            reactor.stop()
+
+
+
+class UDPClient(UDPClientBase):
+    def __init__(self, host, port):
+        super().__init__(host, port)
 
         # Create a Stream
         self._stream = sd.Stream(
@@ -45,6 +79,7 @@ class UDPClient(DatagramProtocol):
         self._stream.start()
 
         
+        
     def __del__(self):
         # Shutdown the audio stream
         print("Shutting down audio")
@@ -52,145 +87,6 @@ class UDPClient(DatagramProtocol):
         self._stream.close()
 
         
-    def startProtocol(self):
-        # "Connect" this to the server
-        self.transport.connect(
-            self._host,
-            self._port
-        )
-
-        store = []
-
-        #self._send_file()
-
-
-    def sendEncodedPacket(self, encoded_packet):
-        # Insert timestamp and sequence number before
-        # encoded frame
-        # INEFFICIENT: This copies the PCM data
-        current_time = int(time.monotonic()*1000) % (2**32-1)
-        packet = (
-            struct.pack(">I", current_time)
-            + struct.pack(">H", self._sequence_no)
-            + encoded_packet
-        )
-        
-        self.transport.write(packet)
-        print(f"client_udp: sent sequence no {self._sequence_no}")
-        
-        self._sequence_no += 1
-        self._sequence_no %= self._sequence_no_max
-
-        
-    def datagramReceived(self, data, addr):
-        #print("Received UDP packet from", addr)
-
-        # Extract the timestamp (4 bytes), sequence number (2 bytes),
-        # and encoded frame (remainder)
-        timestamp, seq_no = struct.unpack(">IH", data[0:6])
-        encoded_packet = data[6:]
-
-        self._jitter_buffer.put_packet(seq_no, encoded_packet)
-
-        
-
-        
-    # Possibly invoked if there is no server listening on the
-    # address to which we are sending.
-    def connectionRefused(self):
-        print("No one listening")
-
-
-    def _send_file(self):
-        # Open wav file
-        #filename = "../../left-right-demo-5s.wav"
-        filename = "../../gs-16b-2c-44100hz.wav"
-        wave_read = wave.open(filename, "rb")
-        
-        # Extract the wav's specification
-        channels = wave_read.getnchannels()
-        print("Number of channels:", channels)
-        samples_per_second = wave_read.getframerate()
-        print("Sampling frequency:", samples_per_second)
-        bytes_per_sample = wave_read.getsampwidth()
-
-        # Create an Opus encoder
-        opus_encoder = OpusBufferedEncoder()
-        opus_encoder.set_application("audio")
-        opus_encoder.set_sampling_frequency(samples_per_second)
-        opus_encoder.set_channels(channels)
-        opus_encoder.set_frame_size(20)
-
-        # Calculate the desired frame size (in samples per channel)
-        desired_frame_duration = 20/1000 # milliseconds
-        desired_frame_size = int(desired_frame_duration * samples_per_second)
-
-        # Loop through the wav file converting its PCM to Opus-encoded packets
-        def send_packets():
-            while True:
-                # Get data from the wav file
-                pcm = wave_read.readframes(desired_frame_size)
-
-                # Check if we've finished reading the wav file
-                if len(pcm) == 0:
-                    print("client_udp: finished reading wave file")
-                    break
-
-                # Calculate the effective frame size from the number of bytes
-                # read
-                effective_frame_size = (
-                    len(pcm) # bytes
-                    // bytes_per_sample
-                    // channels
-                )
-
-                # Check if we've received enough data
-                if effective_frame_size < desired_frame_size:
-                    # We haven't read a full frame from the wav file, so this
-                    # is most likely a final partial frame before the end of
-                    # the file.  We'll pad the end of this frame with silence.
-                    pcm += (
-                        b"\x00"
-                        * ((desired_frame_size - effective_frame_size)
-                           * bytes_per_sample
-                           * channels)
-                    )
-
-                # Encode the PCM data
-                encoded_packets = opus_encoder.encode(pcm)
-
-                for encoded_packet in encoded_packets:
-                    self.sendEncodedPacket(encoded_packet)
-
-                yield self._sequence_no
-
-                # # TEST: What happens if not all packets are delivered?
-                # if random.random() <= 0.05:
-                #     # Discard
-                #     print("Discarding")
-                #     pass
-                # elif random.random() <= 0.7:
-                #     # Reorder
-                #     print("Reordering")
-                #     store.append(packet)
-                # else:
-                #     print("Sending")
-                #     # Send
-                #     self.transport.write(packet)
-                #     # Send all stored packets
-                #     for p in random.sample(store, k=len(store)):
-                #         self.transport.write(p)
-                #     store = []
-            print(f"Finished sending '{filename}'")
-
-        # Install as cooperative task
-        
-        cooperative_task = task.cooperate(send_packets())
-
-        return cooperative_task.whenDone()
-            
-
-
     def _make_callback(self):
         # Jitter buffer is thread safe
         jitter_buffer = self._jitter_buffer
@@ -304,3 +200,166 @@ class UDPClient(DatagramProtocol):
             buf = buf[frames:]
             
         return callback
+
+
+
+class UDPClientTester(UDPClientBase):
+    def __init__(self, host, port, filename):
+        super().__init__(host, port)
+        self._wave_write = None
+
+        # Have we started receiving data from the jitter buffer
+        self._started = False 
+
+        # Open file for writing
+        samples_per_second = 48000
+        
+        print(f"Opening file '{filename}' for writing as wave file") 
+        self._wave_write = wave.open(filename, "wb")
+        self._wave_write.setnchannels(1) # FIXME
+        self._wave_write.setsampwidth(2) # FIXME
+        self._wave_write.setframerate(48000) # FIXME
+
+        self._opus_decoder = OpusDecoder()
+        self._opus_decoder.set_sampling_frequency(samples_per_second)
+        self._opus_decoder.set_channels(1) #FIXME
+
+    def process_audio_frame(self, count):
+        start_time = time.time()
+        print("In process_audio_frame()  count:",count)
+
+        samples_per_second = 48000 # FIXME
+        frame_size_ms = 20 # FIXME
+        
+        # Repeat count times
+        for _ in range(count):
+            # Get next packet form jitter buffer
+            encoded_packet = self._jitter_buffer.get_packet()
+
+            # Decode packet
+            if encoded_packet is not None:
+                # Decode the encoded packet
+                pcm = self._opus_decoder.decode(encoded_packet)
+                self._started = True
+            else:
+                # Accept that we're missing the packet
+                if self._started:
+                    print("WARNING Missing packet")
+                    pcm = self._opus_decoder.decode_missing_packet(frame_size_ms)
+                else:
+                    # We haven't even started, just output silence
+                    print("Haven't even started, return silence")
+                    channels = 1 # FIXME
+                    samples = frame_size_ms * samples_per_second // 1000
+                    pcm = numpy.zeros((samples, channels), dtype=numpy.int16)
+
+            # Save PCM into wave file
+            self._wave_write.writeframes(pcm)
+
+        end_time = time.time()
+        print(f"process_audio_frame() duration: {round((end_time-start_time)*1000)} ms")
+
+        
+    def start_audio_processing_loop(self, interval=20/1000):
+        looping_call = LoopingCall.withCount(self.process_audio_frame)
+
+        d = looping_call.start(interval)
+
+        def on_stop(data):
+            print("The audio processing loop was stopped")
+            
+        def on_error(data):
+            print("ERROR: An error occurred during the audio processing loop:", data)
+            raise Exception("An error occurred during the audio processing loop:" + str(data))
+
+        d.addCallback(on_stop)
+        d.addErrback(on_error)
+
+        return d
+
+    
+    def send_file(self, filename):
+        # Open wav file
+        wave_read = wave.open(filename, "rb")
+        
+        # Extract the wav's specification
+        channels = wave_read.getnchannels()
+        print("Number of channels:", channels)
+        samples_per_second = wave_read.getframerate()
+        print("Sampling frequency:", samples_per_second)
+        bytes_per_sample = wave_read.getsampwidth()
+
+        # Create an Opus encoder
+        opus_encoder = OpusBufferedEncoder()
+        opus_encoder.set_application("audio")
+        opus_encoder.set_sampling_frequency(samples_per_second)
+        opus_encoder.set_channels(channels)
+        opus_encoder.set_frame_size(20)
+
+        # Calculate the desired frame size (in samples per channel)
+        desired_frame_duration = 20/1000 # milliseconds
+        desired_frame_size = int(desired_frame_duration * samples_per_second)
+
+        # Loop through the wav file converting its PCM to Opus-encoded packets
+        def send_packets():
+            while True:
+                # Get data from the wav file
+                pcm = wave_read.readframes(desired_frame_size)
+
+                # Check if we've finished reading the wav file
+                if len(pcm) == 0:
+                    print("client_udp: finished reading wave file")
+                    break
+
+                # Calculate the effective frame size from the number of bytes
+                # read
+                effective_frame_size = (
+                    len(pcm) # bytes
+                    // bytes_per_sample
+                    // channels
+                )
+
+                # Check if we've received enough data
+                if effective_frame_size < desired_frame_size:
+                    # We haven't read a full frame from the wav file, so this
+                    # is most likely a final partial frame before the end of
+                    # the file.  We'll pad the end of this frame with silence.
+                    pcm += (
+                        b"\x00"
+                        * ((desired_frame_size - effective_frame_size)
+                           * bytes_per_sample
+                           * channels)
+                    )
+
+                # Encode the PCM data
+                encoded_packets = opus_encoder.encode(pcm)
+
+                for encoded_packet in encoded_packets:
+                    self._udp_packetizer.write(encoded_packet)
+
+                yield "Not done yet"
+
+                # # TEST: What happens if not all packets are delivered?
+                # if random.random() <= 0.05:
+                #     # Discard
+                #     print("Discarding")
+                #     pass
+                # elif random.random() <= 0.7:
+                #     # Reorder
+                #     print("Reordering")
+                #     store.append(packet)
+                # else:
+                #     print("Sending")
+                #     # Send
+                #     self.transport.write(packet)
+                #     # Send all stored packets
+                #     for p in random.sample(store, k=len(store)):
+                #         self.transport.write(p)
+                #     store = []
+            print(f"Finished sending '{filename}'")
+
+        # Install as cooperative task
+        
+        cooperative_task = task.cooperate(send_packets())
+
+        return cooperative_task.whenDone()

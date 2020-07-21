@@ -1,9 +1,6 @@
 import collections
 import threading
 
-# FIXME We still need to deal with sequence numbers that have
-# overflowed.
-
 class JitterBuffer:
     def __init__(self, buffer_length=3):
         self._buffer_lock = threading.RLock()
