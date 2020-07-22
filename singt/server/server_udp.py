@@ -16,7 +16,7 @@ from singt.udp_packetizer import UDPPacketizer
 log = Logger("backing_track")
 
 
-class RecvOpusStream(DatagramProtocol):
+class UDPServer(DatagramProtocol):
     def __init__(self):
         # Dictionary of OpusDecoders; one per connected client
         self._opus_decoders = {}
@@ -108,7 +108,8 @@ class RecvOpusStream(DatagramProtocol):
 
     def process_audio_frame(self, count):
         start_time = time.time()
-        print("In process_audio_frame()  count:",count)
+        if count != 1:
+            print("WARNING in process_audio_frame(), count:",count)
 
         # Repeat count times
         for _ in range(count):
@@ -122,7 +123,9 @@ class RecvOpusStream(DatagramProtocol):
                     udp_packetizer.write(encoded_packet)
 
         end_time = time.time()
-        print(f"process_audio_frame() duration: {round((end_time-start_time)*1000)} ms")
+        duration_ms = (end_time-start_time)*1000
+        if duration_ms > 5:
+            print(f"process_audio_frame() duration: {round(duration_ms)} ms")
         
     def _start_audio_processing_loop(self, interval):
         looping_call = LoopingCall.withCount(self.process_audio_frame)

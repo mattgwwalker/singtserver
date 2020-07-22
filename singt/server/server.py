@@ -15,7 +15,7 @@ from twisted.web.static import File
 from backing_track import BackingTrack
 from database import Database
 from eventsource import EventSource
-from server_udp import RecvOpusStream
+from server_udp import UDPServer
 from server_tcp import TCPServerFactory
 
 # Setup logging
@@ -90,7 +90,10 @@ tcp_server_factory = TCPServerFactory(
     eventsource_resource,
     backing_track_resource
 )
+
+udp_server = UDPServer()
+
 endpoints.serverFromString(reactor, "tcp:1234").listen(tcp_server_factory)
-reactor.listenUDP(12345, RecvOpusStream())
+reactor.listenUDP(12345, udp_server)
 
 reactor.run()
