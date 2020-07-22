@@ -3,7 +3,10 @@ import struct
 import time
 import wave
 
+import numpy
 import pyogg
+from pyogg import OpusDecoder
+from pyogg import OpusEncoder
 from twisted.internet import reactor
 from twisted.internet.protocol import DatagramProtocol
 from twisted.internet.task import LoopingCall
@@ -18,11 +21,6 @@ log = Logger("backing_track")
 
 class UDPServer(DatagramProtocol):
     def __init__(self):
-        # Dictionary of OpusDecoders; one per connected client
-        self._opus_decoders = {}
-
-        # Dictionary of wave_writes; one per connected client
-        self._wave_writes = {}
         
         # TEST
         self._dropped_packets = 0
@@ -30,6 +28,11 @@ class UDPServer(DatagramProtocol):
         reactor.callWhenRunning(self._start_audio_processing_loop, 20/1000)
 
         self._connections = {}
+
+        self._opus_encoder = OpusEncoder()
+        self._opus_encoder.set_application("audio")
+        self._opus_encoder.set_sampling_frequency(48000)
+        self._opus_encoder.set_channels(1)
         
     def datagramReceived(self, data, addr):
         #print("Received UDP packet from", addr)
@@ -114,15 +117,81 @@ class UDPServer(DatagramProtocol):
 
         # Repeat count times
         for _ in range(count):
+            pcms = {}
+            
             # For each jitter buffer, get the next packet and send it on.
-            for connection in self._connections.values():
-                udp_packetizer = connection["udp_packetizer"]
+            for address, connection in self._connections.items():
                 jitter_buffer = connection["jitter_buffer"]
                 encoded_packet = jitter_buffer.get_packet()
 
-                # Send encoded packet
-                if encoded_packet is not None:
-                    udp_packetizer.write(encoded_packet)
+                # Get decoder
+                try:
+                    opus_decoder = connection["opus_decoder"]
+                    started = connection["started"]
+                except KeyError:
+                    opus_decoder = OpusDecoder()
+                    opus_decoder.set_sampling_frequency(48000) # FIXME
+                    opus_decoder.set_channels(1) # FIXME
+                    started = False
+                    connection["opus_decoder"] = opus_decoder
+                    connection["started"] = started
+                    
+                # Decode encoded packet to PCM
+                if encoded_packet is None:
+                    duration_ms = 20 # ms FIXME
+                    if not started:
+                        # We haven't started yet, so ignore this connection
+                        pcm = None
+                    else:
+                        # We have started, so this means we've lost a packet
+                        pcm = opus_decoder.decode_missing_packet(duration_ms)
+                else:
+                    # We've got a valid packet, decode it
+                    pcm = opus_decoder.decode(encoded_packet)
+
+                pcms[address] = pcm
+
+            # The number of people who may simultaneously speak
+            # without the volume decreasing
+            simultaneous_voices = 2 # FIXME
+
+            # Loop through all the pcms and mix them together
+            combined_pcm = None
+            for address, pcm in pcms.items():
+                if pcm is None:
+                    continue
+
+                # Convert the PCM to floating point
+                pcm_int16 = numpy.frombuffer(
+                    pcm,
+                    dtype = numpy.int16
+                )
+
+                pcm_float = pcm_int16.astype(numpy.float32)
+                pcm_float /= 2**15
+                pcm_float = numpy.reshape(pcm_float, (len(pcm_float), 1))
+                
+                pcm_float /= simultaneous_voices
+                if combined_pcm is None:
+                    combined_pcm = pcm_float
+                else:
+                    combined_pcm += pcm_float
+
+            # Encode the PCM
+            if combined_pcm is not None:
+                # Convert from float32 to int16
+                pcm_int16 = combined_pcm * (2**15-1)
+                pcm_int16 = pcm_int16.astype(numpy.int16)
+
+                # Encode the PCM
+                encoded_packet = self._opus_encoder.encode(pcm_int16.tobytes())
+
+                # Send the encoded packet to all the clients
+                for address, connection in self._connections.items():
+                    udp_packetizer = connection["udp_packetizer"]
+                    # Send encoded packet
+                    if encoded_packet is not None:
+                        udp_packetizer.write(encoded_packet)
 
         end_time = time.time()
         duration_ms = (end_time-start_time)*1000
