@@ -12,14 +12,20 @@ from singt.client.client_tcp import TCPClient
 from singt.client.client_udp import UDPClient
     
 if __name__=="__main__":
-    print("What is your name?")
-    name = input()
+    # Ensure the user has called this script with the correct number
+    # of arguments.
+    if len(sys.argv) != 3:
+        print("Usage:")
+        print(f"   {sys.argv[0]} ip-address name")
+        exit()
+
+    # Extract values for the IP address and the user's name
+    address = sys.argv[1]
+    name = sys.argv[2]
 
     # TCP
     # ===
-    address = sys.argv[1]
     point = TCP4ClientEndpoint(reactor, address, 1234)
-
     client = TCPClient(name)
     d = connectProtocol(point, client)
     
