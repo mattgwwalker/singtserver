@@ -10,6 +10,7 @@ numpy = "*"
 sounddevice = "*"
 twisted = "*"
 singt = {editable = true, path = "."}
+pyogg = {editable = true, path = "./../PyOgg"}
 
 [requires]
 python_version = "3.8"
