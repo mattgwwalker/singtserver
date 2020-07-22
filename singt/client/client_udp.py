@@ -226,13 +226,38 @@ class UDPClientTester(UDPClientBase):
 
         # Input
         self._send_packet_generator = self._get_send_packet_generator(in_filename)
+
+        
+    def startProtocol(self):
+        super().startProtocol()
+        
+        assert self.transport is not None
+        interval = 20/1000
+        self.start_audio_processing_loop(interval)
+
         
     def process_audio_frame(self, count):
         start_time = time.time()
+
+        # # DEBUG
+        # try:
+        #     counter = self.counter
+        # except:
+        #     self.counter = 0
+        #     counter = 0
+        # if counter % 20 == 0:
+        #     time.sleep(250/1000)
+        # self.counter += 1
+
+            
         print("In process_audio_frame()  count:",count)
 
         samples_per_second = 48000 # FIXME
         frame_size_ms = 20 # FIXME
+
+
+        #DEBUG
+        assert self.transport is not None
         
         # Repeat count times
         for _ in range(count):
@@ -241,7 +266,18 @@ class UDPClientTester(UDPClientBase):
             try:
                 next(self._send_packet_generator)
             except StopIteration:
-                pass
+                d = self.transport.stopListening()
+                if d is None:
+                    reactor.stop()
+                else:
+                    def on_success(data):
+                        print("WARNING: In on_success. data:",str(data))
+                        reactor.stop()
+                    def on_error(data):
+                        print("ERROR Failed to stop listening:"+str(data))
+                    d.addCallback(on_success)
+                    d.addErrback(on_error)
+                return d
             
             
             # Received Packets

@@ -49,7 +49,7 @@ if __name__=="__main__":
     globalLogBeginner.beginLoggingTo(logtargets)
 
     # Start a logger with a namespace for a particular subsystem of our application.
-    log = Logger("server")
+    log = Logger("client")
 
         
     # TCP

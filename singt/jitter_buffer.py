@@ -6,23 +6,12 @@ class JitterBuffer:
         self._buffer_lock = threading.RLock()
 
         with self._buffer_lock:
-            self._expected_seq_no = None
-            self._buffer = collections.deque()
-            self._out_of_order_packets = {}
+            self._buffer_length = buffer_length
             
             # The value at which sequence numbers roll back to zero
             self._seq_no_rollover = 2**16
 
-            # Only after the first packet has been 'put' do we allow
-            # gets
-            self._started = False
-
-            # Fill the buffer with None's up to the given buffer
-            # length
-            for _ in range(buffer_length):
-                self._buffer.append(None)
-
-            self._missed_packets = 0
+            self._reset_buffer()
             
             
     def put_packet(self, seq_no, packet):
@@ -81,15 +70,42 @@ class JitterBuffer:
                 print(f"jitter buffer is giving up on the expected packet number {self._expected_seq_no} (total of {self._missed_packets} packets missed)")
                 self._expected_seq_no += 1
                 self._check_out_of_order_packets()
+                if self._missed_packets >= 3:
+                    self._reset_buffer()
                 return None
 
             # Otherwise, return the first item
             packet = self._buffer.popleft()
             return packet
 
+
+    def _reset_buffer(self):
+        """Resets the buffer.
+
+        Called as part of the constructor, but also called if too many
+        packets have been missed.
+
+        """
+        with self._buffer_lock:
+            self._expected_seq_no = None
+            self._buffer = collections.deque()
+            self._out_of_order_packets = {}
+
+            # Only after the first packet has been 'put' do we allow
+            # gets
+            self._started = False
+
+            # Fill the buffer with None's up to the given buffer
+            # length
+            for _ in range(self._buffer_length):
+                self._buffer.append(None)
+
+            self._missed_packets = 0
+
         
     def _get_buffer_size(self):
-        return len(self._buffer) + len(self._out_of_order_packets)
+        with self._buffer_lock:
+            return len(self._buffer) + len(self._out_of_order_packets)
 
         
     def _check_out_of_order_packets(self):

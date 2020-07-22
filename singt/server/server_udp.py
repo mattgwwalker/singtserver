@@ -24,10 +24,6 @@ class UDPServer(DatagramProtocol):
         # Dictionary of wave_writes; one per connected client
         self._wave_writes = {}
         
-        # Initialise the jitter buffer
-        packets_to_buffer = 3
-        self._jitter_buffer = JitterBuffer(packets_to_buffer)
-
         # TEST
         self._dropped_packets = 0
 
@@ -41,15 +37,20 @@ class UDPServer(DatagramProtocol):
         # If we haven't already seen this address, create a new
         # UDPPacketizer for it, otherwise get the appropriate instance
         if addr not in self._connections:
-            self._connections[addr] = UDPPacketizer(self.transport, addr)
-        udp_packetizer = self._connections[addr]
-            
+            packets_to_buffer = 3
+            self._connections[addr] = {
+                "udp_packetizer": UDPPacketizer(self.transport, addr),
+                # Initialise the jitter buffer
+                "jitter_buffer": JitterBuffer(packets_to_buffer)
+            }
+        udp_packetizer = self._connections[addr]["udp_packetizer"]
+        jitter_buffer = self._connections[addr]["jitter_buffer"]
         
         # Extract the timestamp (4 bytes), sequence number (2 bytes),
         # and encoded frame (remainder)
         timestamp, seq_no, encoded_packet = udp_packetizer.decode(data)
 
-        self._jitter_buffer.put_packet(seq_no, encoded_packet)
+        jitter_buffer.put_packet(seq_no, encoded_packet)
 
         return
 
@@ -114,9 +115,10 @@ class UDPServer(DatagramProtocol):
         # Repeat count times
         for _ in range(count):
             # For each jitter buffer, get the next packet and send it on.
-            for udp_packetizer in self._connections.values():
-                # Currently, there is only one jitter buffer!
-                encoded_packet = self._jitter_buffer.get_packet()
+            for connection in self._connections.values():
+                udp_packetizer = connection["udp_packetizer"]
+                jitter_buffer = connection["jitter_buffer"]
+                encoded_packet = jitter_buffer.get_packet()
 
                 # Send encoded packet
                 if encoded_packet is not None:
