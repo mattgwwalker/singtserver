@@ -29,11 +29,6 @@ class UDPServer(DatagramProtocol):
 
         self._connections = {}
 
-        self._opus_encoder = OpusEncoder()
-        self._opus_encoder.set_application("audio")
-        self._opus_encoder.set_sampling_frequency(48000)
-        self._opus_encoder.set_channels(1)
-        
     def datagramReceived(self, data, addr):
         #print("Received UDP packet from", addr)
 
@@ -149,6 +144,18 @@ class UDPServer(DatagramProtocol):
                     # We've got a valid packet, decode it
                     pcm = opus_decoder.decode(encoded_packet)
 
+                # Convert the PCM to floating point
+                if pcm is not None:
+                    pcm_int16 = numpy.frombuffer(
+                        pcm,
+                        dtype = numpy.int16
+                    )
+
+                    pcm_float = pcm_int16.astype(numpy.float32)
+                    pcm_float /= 2**15
+                    pcm_float = numpy.reshape(pcm_float, (len(pcm_float), 1))
+                    pcm = pcm_float
+                    
                 pcms[address] = pcm
 
             # The number of people who may simultaneously speak
@@ -161,35 +168,44 @@ class UDPServer(DatagramProtocol):
                 if pcm is None:
                     continue
 
-                # Convert the PCM to floating point
-                pcm_int16 = numpy.frombuffer(
-                    pcm,
-                    dtype = numpy.int16
-                )
-
-                pcm_float = pcm_int16.astype(numpy.float32)
-                pcm_float /= 2**15
-                pcm_float = numpy.reshape(pcm_float, (len(pcm_float), 1))
+                pcm /= simultaneous_voices
+                pcms[address] = pcm
                 
-                pcm_float /= simultaneous_voices
                 if combined_pcm is None:
-                    combined_pcm = pcm_float
+                    combined_pcm = pcm.copy()
                 else:
-                    combined_pcm += pcm_float
+                    combined_pcm += pcm
 
-            # Encode the PCM
+            # Prepare each individual client's PCM
             if combined_pcm is not None:
-                # Convert from float32 to int16
-                pcm_int16 = combined_pcm * (2**15-1)
-                pcm_int16 = pcm_int16.astype(numpy.int16)
-
-                # Encode the PCM
-                encoded_packet = self._opus_encoder.encode(pcm_int16.tobytes())
-
                 # Send the encoded packet to all the clients
                 for address, connection in self._connections.items():
-                    udp_packetizer = connection["udp_packetizer"]
+                    client_signal = pcms[address]
+                    if client_signal is None:
+                        continue
+                    
+                    # Remove their signal from the audio
+                    client_pcm = combined_pcm - client_signal
+
+                    # Convert from float32 to int16
+                    pcm_int16 = client_pcm * (2**15-1)
+                    pcm_int16 = pcm_int16.astype(numpy.int16)
+
+                    # Obtain encoder
+                    try:
+                        opus_encoder = connection["opus_encoder"]
+                    except KeyError:
+                        opus_encoder = OpusEncoder()
+                        opus_encoder.set_application("audio")
+                        opus_encoder.set_sampling_frequency(48000)
+                        opus_encoder.set_channels(1)
+                        connection["opus_encoder"] = opus_encoder
+                    
+                    # Encode the PCM
+                    encoded_packet = opus_encoder.encode(pcm_int16.tobytes())
+                    
                     # Send encoded packet
+                    udp_packetizer = connection["udp_packetizer"]
                     if encoded_packet is not None:
                         udp_packetizer.write(encoded_packet)
 
