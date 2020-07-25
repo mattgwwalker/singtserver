@@ -10,13 +10,11 @@ from twisted.internet import protocol, reactor, endpoints
 from twisted.internet import defer
 from twisted.internet import task
 from twisted.web import server, resource
-from twisted.web.static import File
 
-from backing_track import BackingTrack
 from database import Database
-from eventsource import EventSource
 from server_udp import UDPServer
 from server_tcp import TCPServerFactory
+import server_web
 
 # Setup logging
 import sys
@@ -67,33 +65,25 @@ db_filename = session_dir / "database.sqlite3"
 # Create the database
 database = Database(db_filename)
 
-# Create the web resources
-file_resource = File("./www/")
-root = file_resource
+# Create UDP server
+udp_server = UDPServer()
 
-eventsource_resource = EventSource()
-root.putChild(b"eventsource", eventsource_resource)
-
-backing_track_resource = BackingTrack(
+# Create the web-server based interface
+www_server, eventsource_resource, backing_track_resource = server_web.create_web_interface(
     uploads_dir,
     backing_track_dir,
-    database,
-    eventsource_resource
+    database
 )
-root.putChild(b"backing_track", backing_track_resource)
 
-# Create a web server
-site = server.Site(root)
-reactor.listenTCP(8080, site)
-        
+# Create TCP server factory
 tcp_server_factory = TCPServerFactory(
     eventsource_resource,
     backing_track_resource
 )
 
-udp_server = UDPServer()
 
 endpoints.serverFromString(reactor, "tcp:1234").listen(tcp_server_factory)
 reactor.listenUDP(12345, udp_server)
+reactor.listenTCP(8080, www_server)
 
 reactor.run()
