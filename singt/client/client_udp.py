@@ -159,7 +159,7 @@ class UDPClient(UDPClientBase):
                         pcm = opus_decoder.decode_missing_packet(frame_size_ms)
                     else:
                         # We haven't even started, just output silence
-                        print("Haven't even started, return silence")
+                        #print("Haven't even started, return silence")
                         channels = outdata.shape[1]
                         samples = frame_size_ms * samples_per_second // 1000
                         pcm = numpy.zeros((samples, channels), dtype=numpy.int16)
@@ -298,7 +298,7 @@ class UDPClientTester(UDPClientBase):
                     pcm = self._opus_decoder.decode_missing_packet(frame_size_ms)
                 else:
                     # We haven't even started, just output silence
-                    print("Haven't even started, return silence")
+                    #print("Haven't even started, return silence")
                     channels = 1 # FIXME
                     samples = frame_size_ms * samples_per_second // 1000
                     pcm = numpy.zeros((samples, channels), dtype=numpy.int16)

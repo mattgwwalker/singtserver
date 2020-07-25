@@ -1,8 +1,12 @@
+wheel:
+	python setup.py build bdist_wheel
+
 singt.pex:
 	pip freeze > pip_freeze.txt
 	pex -o singt.pex -r pip_freeze.txt
 
 clean:
-	rm singt.pex
-	rm pip_freeze.txt
+	rm -f singt.pex
+	rm -f pip_freeze.txt
+	rm -rf dist
 

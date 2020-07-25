@@ -1,0 +1,20 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[dev-packages]
+
+[packages]
+twisted = "*"
+pipenv = "*"
+numpy = "*"
+sounddevice = "*"
+pex = "*"
+art = "*"
+virtualenv = "==20.0.27"
+singt = {path = "./dist/singt-0.2-py3-none-any.whl"}
+pyogg = {path = "./../PyOgg/PyOgg/dist/fixed_wheels/PyOgg-0.6.14a2-py2.py3-none-any.whl"}
+
+[requires]
+python_version = "3.7"

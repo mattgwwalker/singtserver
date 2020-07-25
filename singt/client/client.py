@@ -3,6 +3,7 @@ import random
 import sys
 import threading
 
+import art
 import numpy
 import sounddevice as sd
 from twisted.internet import reactor
@@ -12,19 +13,12 @@ from twisted.logger import Logger, LogLevel, LogLevelFilterPredicate, \
 
 from singt.client.client_tcp import TCPClient
 from singt.client.client_udp import UDPClient
+
+
+def run_client(address, username):
+    title = art.text2art("Singt")
+    print(title)
     
-if __name__=="__main__":
-    # Ensure the user has called this script with the correct number
-    # of arguments.
-    if len(sys.argv) != 3:
-        print("Usage:")
-        print(f"   {sys.argv[0]} ip-address name")
-        exit()
-
-    # Extract values for the IP address and the user's name
-    address = sys.argv[1]
-    username = sys.argv[2]
-
     # Setup logging
     logfile = open(f"client-{username}.log", 'w')
     logtargets = []
@@ -78,3 +72,18 @@ if __name__=="__main__":
 
     print("Finished.")
 
+
+
+if __name__=="__main__":
+    # Ensure the user has called this script with the correct number
+    # of arguments.
+    if len(sys.argv) != 3:
+        print("Usage:")
+        print(f"   {sys.argv[0]} ip-address name")
+        exit()
+
+    # Extract values for the IP address and the user's name
+    address = sys.argv[1]
+    username = sys.argv[2]
+
+    run_client(address, username)

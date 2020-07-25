@@ -16,7 +16,7 @@ class JitterBuffer:
             
     def put_packet(self, seq_no, packet):
         with self._buffer_lock:
-            print(f"jitter buffer recv'd packet number {seq_no} (buffer contains {self._get_buffer_size()} items)")
+            #print(f"jitter buffer recv'd packet number {seq_no} (buffer contains {self._get_buffer_size()} items)")
 
             self._started = True
             
@@ -57,10 +57,10 @@ class JitterBuffer:
         
     def get_packet(self):
         with self._buffer_lock:
-            print(f"getting packet from jitter buffer (which contains {self._get_buffer_size()} items)")
+            #print(f"getting packet from jitter buffer (which contains {self._get_buffer_size()} items)")
 
             if not self._started:
-                print("We haven't received our first packet; ignoring get request")
+                #print("We haven't received our first packet; ignoring get request")
                 return None
             
             # If the buffer is empty, give up on the currently
