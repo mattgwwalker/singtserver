@@ -15,6 +15,10 @@ import sounddevice as sd
 from singt.jitter_buffer import JitterBuffer
 from singt.udp_packetizer import UDPPacketizer
 
+from twisted.logger import Logger
+
+# Start a logger with a namespace for a particular subsystem of our application.
+log = Logger("client_udp")
 
 class UDPClientBase(DatagramProtocol):
     def __init__(self, host, port):
@@ -58,6 +62,7 @@ class UDPClientBase(DatagramProtocol):
     def connectionRefused(self):
         print("No one listening; stopping")
         if reactor.running:
+            log.error("STOPPING CLIENT")
             reactor.stop()
 
 
@@ -268,10 +273,12 @@ class UDPClientTester(UDPClientBase):
             except StopIteration:
                 d = self.transport.stopListening()
                 if d is None:
+                    log.error("STOPPING CLIENT")
                     reactor.stop()
                 else:
                     def on_success(data):
                         print("WARNING: In on_success. data:",str(data))
+                        log.error("STOPPING CLIENT")
                         reactor.stop()
                     def on_error(data):
                         print("ERROR Failed to stop listening:"+str(data))

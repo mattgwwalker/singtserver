@@ -3,6 +3,11 @@ import struct
 
 from twisted.internet import reactor
 from twisted.internet.protocol import Protocol
+from twisted.logger import Logger
+
+# Start a logger with a namespace for a particular subsystem of our application.
+log = Logger("client_tcp")
+
 
 class TCPClient(Protocol):
     def __init__(self, name):
@@ -21,8 +26,6 @@ class TCPClient(Protocol):
 
     def connectionLost(self, reason):
         print("Connection lost:", reason)
-        if reactor.running:
-            reactor.stop()
         
     def sendMessage(self, msg):
         msg_as_bytes = msg.encode("utf-8")

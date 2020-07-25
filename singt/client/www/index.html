@@ -36,7 +36,6 @@
               <a class="nav-link" href="#page_connect">
                 Connect
                 <span class="d-none badge badge-pill badge-danger pulse">&nbsp;</span>
-                <span id="nav_participants" class="d-none badge badge-light">3</span> <!-- number of users -->
               </a>
             </li>
             <li class="nav-item">
@@ -65,6 +64,11 @@
               don't wear headphones everyone else will hear horrible
               feedback and they might stop being your friend.
             </p>
+
+            <p class="mb-3">It's also important that your headphones
+              are <strong>wired</strong>; Bluetooth connections add
+              considerable latency, which we're trying to avoid.
+            </p>
             <p class="mb-3">
               Before we can connect and sing together we need to know
               a couple of technical things about your computer and how
@@ -87,7 +91,7 @@
 
 	         <button class="btn btn-primary mr-2"
                     id="button_measure_loop_back_latency_recording">
-              Measure Loop Back Latency for Recording
+              Measure Loop-Back Latency for Recording
             </button>
           </div> <!-- /card-body -->
 
@@ -121,10 +125,10 @@
 
       <!-- Connect -->
       <div id="page_connect" class="page">
-        <div class="card">
+        <div class="d-none card" id="card_connect">
           <div class="card-header">
             <h2>
-              <img src="./icons/people-fill.svg" alt="" width="32" height="32" class="mr-2">
+              <img src="./icons/people.svg" alt="" width="32" height="32" class="mr-2">
               Connect
             </h2>
           </div>
@@ -144,7 +148,7 @@
                       Name
                     </label>
                     <div class="col-sm-10">
-                      <input type="text" class="form-control" placeholder="Luciano">
+                      <input type="text" class="form-control" id="name_input" placeholder="Luciano">
                     </div>
                   </div>
                   
@@ -153,32 +157,39 @@
                       IP Address
                     </label>
                     <div class="col-sm-10">
-                      <input type="text" class="form-control" placeholder="127.0.0.1">
+                      <input type="text" class="form-control" id="address_input" placeholder="127.0.0.1">
                     </div>
                   </div>
 
-                  <button class="btn btn-primary">Connect to Server</button>
+                  <button class="btn btn-primary"
+                          id="connect-button">
+                    Connect to Server
+                  </button>
 
-              </div>
-              <div class="col col-lg-4">
-                <h3>Participants</h3>
-
-
-                <ul class="d-none list-group" id="participants">
-                </ul>
-                <div id="no_participants" class="d-none alert alert-info" role="alert">
-                  <h4 class="alert-heading">Uh oh</h4>
-                  <p>
-	<img src="./icons/person-badge.svg" alt="" width="32" height="32" title="Person" class="mr-2"> No one has connected yet.
-                  </p>
-                  <hr class='thin'>
-                  <p class="mb-0 text-sm text-muted">If a tree falls in the forest without a conductor... </p>
-                </div>
               </div>
             </div>
           </div>
-        </div>
-      </div>
+        </div>  <!-- /card -->
+
+        <div class="d-none card" id="card_connected">
+          <div class="card-header">
+            <h2>
+              <img src="./icons/people-fill.svg" alt="" width="32" height="32" class="mr-2">
+              Connected
+            </h2>
+          </div>
+          <div class="card-body">
+            <p class="mb-3">
+              You're connected.
+            </p>
+            <button class="btn btn-primary"
+                    id="button_disconnect">
+              Disconnect from Server
+            </button>
+          </div> <!-- /card-body -->
+          
+        </div> <!-- /card -->
+      </div> <!-- /page -->
 
       <!-- Debug -->
       <div id="page_debug" class="page">
@@ -196,12 +207,35 @@
               these buttons.
             </p>
           </div>
+          
+          <div class="card-body">
+	         <button class="btn btn-primary mr-2"
+                    id="button_check_playback">
+              Check Playback
+            </button>
+          </div> <!-- /card-body -->
+          
+          <div class="card-body">
+	         <button class="btn btn-primary mr-2"
+                    id="button_recording">
+              Check Recording
+            </button>
+          </div> <!-- /card-body -->
+          
+          <div class="card-body">
+	         <button class="btn btn-primary mr-2"
+                    id="button_recording">
+              Measure Loop-Back Levels
+            </button>
+          </div> <!-- /card-body -->
+          
           <div class="card-body">
 	         <button class="btn btn-primary mr-2"
                     id="button_measure_loop_back_latency_recording">
               Measure Loop Back Latency for Voice
             </button>
           </div> <!-- /card-body -->
+          
           </div>
         </div>
       </div>

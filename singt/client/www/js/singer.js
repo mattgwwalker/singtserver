@@ -5,9 +5,8 @@ window.SINGT = {};
 SINGT.wireup = function(){
     // All wireup goes here
     SINGT.wireup.nav();
-    SINGT.wireup.eventsource();
     SINGT.wireup.forms();
-    SINGT.wireup.page_tracks();
+    SINGT.wireup.page_connect();
 }
 
 SINGT.wireup.nav = function() {
@@ -23,159 +22,142 @@ SINGT.wireup.nav = function() {
         })
     });
     // Check for hash symbol in address
-    var hash = window.location.hash || '#page_tracks';
+    var hash = window.location.hash || '#page_connect';
     hash = hash.split('/')[0]; //allow for splitting has h for multiple uses
     $('a[href="'+hash+'"]').click();
     
 }
 
-SINGT.wireup.eventsource = function(){
-    let eventSource = new EventSource('eventsource');
-    eventSource.addEventListener("update_participants", SINGT.participants.update, false);
-    eventSource.addEventListener("update_backing_tracks", SINGT.backing_tracks.update, false);
-};
-
-SINGT.wireup.page_tracks = function(){
-    // Ensures that any use of Bootstrap's custom file selector
-    // updates the filename when the user selects a file.
-    $('.custom-file-input').on('change', function() { 
-	let fileName = $(this).val().split('\\').pop(); 
-	$(this).next('.custom-file-label').addClass("selected").html(fileName); 
+SINGT.wireup.page_connect = function(){
+    // Form command
+    command = {
+        "command": "is_connected",
+    }
+    json_command = JSON.stringify(command);
+    console.log(json_command);
+    
+    // Send "is_connected" command
+    $.ajax({
+        type: "POST",
+        url: "command",
+        data: json_command,
+        dataType: "json", // type from server
+        contentType: "application/json", // type in this request
+        success: function(result) {
+            console.log("Success?");
+            console.log(result);
+            console.log(result["result"]);
+            if (result["result"] == "success") {
+                console.log("Success!");
+                if (result["connected"]) {
+                    $("#card_connect").addClass("d-none");
+                    $("#card_connected").removeClass("d-none");
+                }
+                else {
+                    $("#card_connect").removeClass("d-none");
+                    $("#card_connected").addClass("d-none");
+                }
+                // Do something here
+            }
+        },
+        error: function(first) {
+            console.log("ERROR in is_connected", first);
+        }
     });
 };
 
 SINGT.wireup.forms = function() {
-    // Connect backing track upload button
-    $("#backing_track_upload").click(SINGT.backing_tracks.upload);
+    $("#connect-button").click(function(){
+        // Get values from inputs
+        username = $("#name_input").val().trim();
+        address = $("#address_input").val().trim();
 
-    $("#show_upload_form").click(function(){
-        $(this).parent().addClass('d-none');
-        $("#upload_form").removeClass('d-none');
+        // Sanity check inputs
+        errors = [];
+        if (username=="") {
+            errors.push("Please enter a valid name.");
+        }
+        if (address=="") {
+            errors.push("Please enter a valid IP address.");
+        }
+
+        // Alert if any errors were found
+        if (errors.length != 0) {
+            message = "";
+            for (error of errors) {
+                message += error + "\n";
+            }
+           
+            alert(message);
+            return;
+        }
+
+        // Form command
+        command = {
+            "command": "connect",
+            "username": username,
+            "address": address
+        }
+        json_command = JSON.stringify(command);
+        console.log(json_command);
+
+        // Send command
+        $.ajax({
+            type: "POST",
+            url: "command",
+            data: json_command,
+            contentType: "text/plain",
+            success: function(msg) {
+                console.log("Success?");
+                result = JSON.parse(msg)
+                if (result["result"] == "success") {
+                    console.log("Success!");
+                    $("#card_connect").addClass("d-none");
+                    $("#card_connected").removeClass("d-none");
+                }
+                else {
+                    console.log("No success :o(");
+                    console.log(msg);
+                }
+            },
+            error: function() {
+                console.log("ERROR");
+            }
+        });
+            
+            
+        
+        /*
+        $.ajax({
+            url: 'command',
+            type: 'POST',
+            data: json_command,
+            dataType: "text/plain", //"json", // return value's data type
+            processData: false,
+            contentType: "text/plain", //false,//"application/json",
+            cache: false,
+            success: function(msg) {
+                console.log(msg);
+            },
+            error: function(jqXHR, st, error) {
+                // Hopefully we should never reach here
+                //console.log(jqXHR);
+                //console.log(st);
+                //console.log("error:",error);
+                //console.log("status:",st);
+                alert("FAILED to send command to connect to server");
+            }
+        });
+
+        */
+
+
     })
     $("#backing_track_cancel").click(function(){
         $("#show_upload_form").parent().removeClass('d-none');
         $("#upload_form").addClass('d-none');
     })
 }
-
-SINGT.participants = {};
-SINGT.participants.update = function() {
-    console.log(event);
-    let parsed_data = JSON.parse(event.data);
-    console.log(parsed_data);
-
-    if ("participants" in parsed_data) {
-        participants = parsed_data["participants"];
-        
-        $('#participants').addClass('d-none');
-        $('#no_participants').addClass('d-none');
-        $('#nav-participants').addClass('d-none');
-        
-
-        // If there aren't any participants, state that
-        if (participants.length == 0) {
-            $('#no_participants').removeClass('d-none');
-        } else {	
-            // Otherwise, form an unordered list with the names of the
-            // participants
-            let participantsHtml = '';
-            for (participant of participants) {
-                participantsHtml += '<li class="list-group-item"><img src="./icons/person-badge.svg" alt="" width="32" height="32" title="Person" class="mr-2">' + participant + '</li>';
-            }
-            $("#participants").html(participantsHtml).removeClass('d-none');
-            $('#nav-participants').text(participants.length).removeClass('d-none');
-        }
-    } else {
-        console.error('Dude, wheres my car?');
-    }
-    
-};
-
-SINGT.backing_tracks = {};
-
-SINGT.backing_tracks.upload = function() {
-    console.log("Uploading backing track")
-
-    let formData = new FormData();
-    formData.append("command", "upload_backing_track");
-    formData.append("name", $("#backing_track_name").val());
-    formData.append("file", $("#backing_track_file").get(0).files[0]);
-    
-    $.ajax({
-        url: 'backing_track',
-        type: 'POST',
-        data: formData,
-        dataType: "json",
-        processData: false,
-        mimeType: 'multipart/form-data',
-        contentType: false,
-        cache: false,
-        success: function(msg) {
-            console.log(msg);
-            if ("result" in msg) {
-                if (msg["result"]=="error") {
-                    reason = msg["reason"]
-                    alert("Error: "+reason);
-                }
-		else if (msg["result"]=="success") {
-		    alert("Successfully uploaded backing track");
-		}
-		else {
-		    alert("Unexpected response from server:"+msg)
-		}
-            } else {
-                alert("Unexpected response from server:"+msg)
-            }
-        },
-        error: function(jqXHR, st, error) {
-            // Hopefully we should never reach here
-            //console.log(jqXHR);
-            //console.log(st);
-            console.log("error:",error);
-            //console.log("status:",st);
-            alert("FAILED to send backing track file");
-        }
-    });
-
-    return false;
-}
-
-SINGT.backing_tracks.update = function() {
-    let parsed_data = JSON.parse(event.data);
-
-    if (parsed_data.length == 0) {
-        // There are zero entries in the list of backing tracks
-        $('#zero_tracks').removeClass('d-none');
-        $('#backing_tracks').addClass('d-none');
-
-        let optionsHtml = '<option value="-1">No tracks uploaded</option>';
-        $("#recording_select_tracks").html(optionsHtml).removeClass('d-none');
-        $("#playback_select_tracks").html(optionsHtml).removeClass('d-none');
-        return
-    } 
-
-    // There are more than zero entries in the list of backing tracks
-    $('#zero_tracks').addClass('d-none');
-    $('#backing_tracks').removeClass('d-none');
-    let tracksHtml = '';
-    let optionsHtml = '<option>Choose one</option>';
-
-    // Go through each of the entries and add in a row to the tracks
-    // pages, the recording page, and the playback page
-    for (track_entry of parsed_data) {
-        track_id = track_entry[0]
-        track_name = track_entry[1]
-        
-        tracksHtml += '<li class="list-group-item"><img src="./icons/file-music.svg" alt="" width="32" height="32" title="Track" class="mr-2">' + track_name + '</li>';
-
-        optionsHtml += '<option value="'+track_id+'">'+track_name+'</option>'
-    }
-    $("#backing_tracks").html(tracksHtml).removeClass('d-none');
-    $("#recording_select_tracks").html(optionsHtml).removeClass('d-none');
-    $("#playback_select_tracks").html(optionsHtml).removeClass('d-none');
-};
-
-
 
 $(document).ready(function(){
     SINGT.wireup();
