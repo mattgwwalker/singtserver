@@ -1,8 +1,7 @@
 from setuptools import setup, find_packages
 
-setup(name='singt',
+setup(name='singtserver',
       version='0.4',
-      packages=["singt",
-                "singtcopy"],
+      packages=["singtserver"],
       include_package_data=True
 )

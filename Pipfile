@@ -13,6 +13,7 @@ pex = "*"
 virtualenv = "==20.0.27"
 pyogg = {path = "./../PyOgg/PyOgg/dist/fixed_wheels/PyOgg-0.6.14a2-py2.py3-none-any.whl"}
 singt = {path = "./dist/singt-0.3.7-py3-none-any.whl"}
+singtserver = {editable = true, path = "."}
 
 [requires]
 python_version = "3.7"
