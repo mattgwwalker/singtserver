@@ -5,8 +5,13 @@ from singt.eventsource import EventSource
 from singt.client.client_web_command import CommandResource
 
 def create_web_interface(reactor):
+    # TEST
+    import pkg_resources
+    DATA_PATH = pkg_resources.resource_filename('singt', 'client/www')
+
+    
     # Create the web resources
-    file_resource = File("./www/")
+    file_resource = File(DATA_PATH)#("./www/")
     root = file_resource
 
     # Create an event source server

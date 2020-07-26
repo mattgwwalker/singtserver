@@ -14,6 +14,7 @@ from twisted.logger import Logger
 
 from singt.jitter_buffer import JitterBuffer
 from singt.udp_packetizer import UDPPacketizer
+from automatic_gain_control import AutomaticGainControl
 
 # Start a logger with a namespace for a particular subsystem of our application.
 log = Logger("backing_track")
@@ -108,7 +109,7 @@ class UDPServer(DatagramProtocol):
     def process_audio_frame(self, count):
         start_time = time.time()
         if count != 1:
-            print("WARNING in process_audio_frame(), count:",count)
+            print(f"WARNING in process_audio_frame(), catching up on {count} missed cycles")
 
         # Repeat count times
         for _ in range(count):
@@ -155,7 +156,17 @@ class UDPServer(DatagramProtocol):
                     pcm_float /= 2**15
                     pcm_float = numpy.reshape(pcm_float, (len(pcm_float), 1))
                     pcm = pcm_float
+
+                    # Apply automatic gain control to the PCM
+                    try:
+                        agc = connection["automatic_gain_control"]
+                    except KeyError:
+                        agc = AutomaticGainControl()
+                        connection["automatic_gain_control"] = agc
+                    agc.apply(pcm)
+                    print("gain:", agc.gain)
                     
+                # Store the PCM
                 pcms[address] = pcm
 
             # The number of people who may simultaneously speak

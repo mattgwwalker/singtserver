@@ -1,7 +1,7 @@
 wheel:
 	python setup.py build bdist_wheel
 
-singt.pex:
+pex:
 	pip freeze > pip_freeze.txt
 	pex -o singt.pex -r pip_freeze.txt
 

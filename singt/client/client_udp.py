@@ -76,7 +76,7 @@ class UDPClient(UDPClientBase):
             samplerate = 48000,
             channels = 1,
             dtype = numpy.float32,
-            latency = 100/1000,
+            latency = "low",#100/1000,
             callback = self._make_callback()
         )
 

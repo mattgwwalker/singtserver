@@ -1,4 +1,5 @@
-import singt.client.client
+def start_client():
+    from .client import client
 
-def run_client(address, username):
-    return singt.client.client.run_client(address, username)
+    client.start()
+

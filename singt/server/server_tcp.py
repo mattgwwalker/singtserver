@@ -3,6 +3,11 @@ import struct
 
 from twisted.internet import defer
 from twisted.internet import protocol
+from twisted.logger import Logger
+
+# Start a logger with a namespace for a particular subsystem of our application.
+log = Logger("server_tcp")
+
 
 # An instance of this class is created for each client connection.
 class TCPServer(protocol.Protocol):
