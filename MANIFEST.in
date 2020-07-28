@@ -1,1 +1,1 @@
-recursive-include www *
+recursive-include singtserver/www *
