@@ -12,9 +12,9 @@ from twisted.internet.protocol import DatagramProtocol
 from twisted.internet.task import LoopingCall
 from twisted.logger import Logger
 
-from singt.jitter_buffer import JitterBuffer
-from singt.udp_packetizer import UDPPacketizer
-from automatic_gain_control import AutomaticGainControl
+from singtcommon import JitterBuffer
+from singtcommon import UDPPacketizer
+from singtcommon import AutomaticGainControl
 
 # Start a logger with a namespace for a particular subsystem of our application.
 log = Logger("backing_track")

@@ -2,7 +2,7 @@ from twisted.web import server
 from twisted.web.static import File
 
 from backing_track import BackingTrack
-from singt.eventsource import EventSource
+from singtcommon import EventSource
 
 def create_web_interface(uploads_dir, backing_track_dir, database):
     # Create the web resources
