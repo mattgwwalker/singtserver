@@ -68,6 +68,13 @@ database = Database(db_filename)
 # Create UDP server
 udp_server = UDPServer()
 
+# TEST Audio playback
+def play_audio():
+    filename = "psallite.opus"
+    #filename="left-right-demo-5s.opus"
+    udp_server.play_audio(filename)
+reactor.callWhenRunning(play_audio)
+
 # Create the web-server based interface
 www_server, eventsource_resource, backing_track_resource = server_web.create_web_interface(
     uploads_dir,
