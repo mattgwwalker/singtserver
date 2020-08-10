@@ -8,3 +8,6 @@ __pycache__/
 database.sqlite3
 session_files/
 singt.pex
+build/
+dist/
+singtserver.egg-info/
