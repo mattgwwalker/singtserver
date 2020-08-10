@@ -8,6 +8,7 @@ SINGT.wireup = function(){
     SINGT.wireup.eventsource();
     SINGT.wireup.forms();
     SINGT.wireup.page_tracks();
+    SINGT.wireup.page_playback();
 }
 
 SINGT.wireup.nav = function() {
@@ -42,6 +43,93 @@ SINGT.wireup.page_tracks = function(){
 	let fileName = $(this).val().split('\\').pop(); 
 	$(this).next('.custom-file-label').addClass("selected").html(fileName); 
     });
+};
+
+SINGT.wireup.page_playback = function(){
+    $("#playback_button_play").click(function() {
+        console.log("Playback button clicked");
+
+        // Get state of combo selection
+        var combo_selection = undefined
+        if ($("#playback_combo_track_only").is(":checked")) {
+            combo_selection = "track_only";
+        } else if ($("#playback_combo_mix").is(":checked")) {
+            combo_selection = "mix";
+        } else if ($("#playback_combo_takes_only").is(":checked")) {
+            combo_selection = "takes_only";
+        }
+        console.log("combo_selection:", combo_selection);
+
+        // Get selected track
+        track = $("#playback_select_tracks").val();
+        console.log("track:", track);
+
+        // Get selected takes
+        takes = $("#playback_multiselect_takes").val()
+        console.log("takes:", takes);
+
+        // Form command
+        command = {
+            "command": "play_for_everyone"
+        }
+        if (combo_selection=="track_only" ||
+            combo_selection=="mix") {
+            command["track_id"] = track;
+        }
+        if (combo_selection=="mix" ||
+            combo_selection=="takes_only") {
+            command["take_ids"] = takes;
+        }
+        json_command = JSON.stringify(command);
+        
+        // Send command
+        console.log("command:", command);
+        $.ajax({
+            type: 'POST',
+            url: 'command',
+            data: json_command,
+            dataType: "json",
+            contentType: "application/json",
+            success: function(msg) {
+                console.log(msg);
+            },
+            error: function(jqXHR, st, error) {
+                // Hopefully we should never reach here
+                alert("FAILED to send command 'play_for_everyone'");
+            }
+        });
+
+        return false; // Do not reload page
+    });
+
+    $("#playback_button_stop").click(function() {
+        console.log("Stop button clicked");
+
+        // Form command
+        command = {
+            "command": "stop_for_everyone"
+        }
+        json_command = JSON.stringify(command);
+        
+        // Send command
+        console.log("command:", command);
+        $.ajax({
+            type: 'POST',
+            url: 'command',
+            data: json_command,
+            dataType: "json",
+            contentType: "application/json",
+            success: function(msg) {
+                console.log(msg);
+            },
+            error: function(jqXHR, st, error) {
+                // Hopefully we should never reach here
+                alert("FAILED to send command 'stop_for_everyone'");
+            }
+        });
+
+        return false; // Do not reload page
+    });    
 };
 
 SINGT.wireup.forms = function() {
@@ -158,7 +246,7 @@ SINGT.backing_tracks.update = function() {
     $('#zero_tracks').addClass('d-none');
     $('#backing_tracks').removeClass('d-none');
     let tracksHtml = '';
-    let optionsHtml = '<option>Choose one</option>';
+    let optionsHtml = '';
 
     // Go through each of the entries and add in a row to the tracks
     // pages, the recording page, and the playback page

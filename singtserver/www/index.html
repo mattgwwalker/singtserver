@@ -205,13 +205,34 @@
             </p>
 
             <p>
-              To play back audio, select a backing track, a take, or
-              one of each, and press the "Play for Everyone" button.
+              To play back audio, select your desired combination of
+              backing tracks and takes and press the "Play for
+              Everyone" button.
             </p>
 
             <form id="form_playback">
               <div class="form-group row">
-                <label class="col-sm-2 col-form-label">Tracks</label>
+                <label class="col-sm-2 col-form-label">Combination</label>
+                <div class="col-sm-10">
+                  <div class="btn-group btn-group-toggle" data-toggle="buttons">
+                    <label class="btn btn-secondary active">
+                      <input type="radio" name="options" id="playback_combo_track_only" autocomplete="off" checked>
+                      Track Only
+                    </label>
+                    <label class="btn btn-secondary">
+                      <input type="radio" name="options" id="playback_combo_mix" autocomplete="off">
+                      Mix Track and Takes
+                    </label>
+                    <label class="btn btn-secondary">
+                      <input type="radio" name="options" id="playback_combo_takes_only" autocomplete="off">
+                      Takes Only
+                    </label>
+                  </div>
+                </div>
+              </div>
+              
+              <div class="form-group row">
+                <label class="col-sm-2 col-form-label">Track</label>
                 <div class="col-sm-10">
                   <select class="form-control" id="playback_select_tracks">
                   </select>
@@ -219,18 +240,28 @@
               </div>
               
               <div class="form-group row">
-                <label class="col-sm-2 col-form-label">Takes</label>
+                <label class="col-sm-2 col-form-label" for="playback_multiselect_takes">
+                  Takes
+                </label>
                 <div class="col-sm-10">
-                  <select class="form-control">
-	<option>Choose one</option>
-	<option value="1234-0">Original track</option>
-	<option value="1234-1">Take 1</option>
+                  <select multiple class="form-control" id="playback_multiselect_takes">
+                    <option value="1">Take 1</option>
+                    <option>Take 2</option>
+                    <option>Take 3</option>
+                    <option>Take 4</option>
+                    <option>Take 5</option>
                   </select>
                 </div>
               </div>
 
+              
               <hr> 
-              <button class="btn btn-primary">Play for Everyone</button>
+              <button class="btn btn-primary" id="playback_button_play">
+                Play for Everyone
+              </button>
+              <button class="btn btn-secondary" id="playback_button_stop">
+                Stop for Everyone
+              </button>
             </form>
           </div>
         </div>

@@ -23,6 +23,7 @@ log = Logger("backing_track")
 class UDPServer(DatagramProtocol):
     def __init__(self):
         self._stream = None
+        self._stream_buffer = None
         # TEST
         self._dropped_packets = 0
 
@@ -52,11 +53,25 @@ class UDPServer(DatagramProtocol):
         jitter_buffer.put_packet(seq_no, encoded_packet)
 
 
-    def play_audio(self, filename):
+    def play_audio(self, filenames):
         # Assumes filename points to Opus-encoded audio.
-        # Check that we're not currently playing anything else
+        # TODO: Check that we're not currently playing anything else
+
+        # TODO: Deal with more than one filename
+        log.info("Playing these filenames: "+str(filenames))
+        filename = filenames[0]
+        
         # Open file as stream
-        self._stream = pyogg.OpusFileStream(filename)
+        try:
+            self._stream = pyogg.OpusFileStream(str(filename))
+        except Exception as e:
+            raise Exception(f"Failed to open OpusFileStream (with filename '{filename}': "+
+                            str(e))
+        self._stream_buffer = None
+
+    def stop_audio(self):
+        # TODO: It would be much nicer if this faded out
+        self._stream = None
         self._stream_buffer = None
 
 
@@ -210,7 +225,7 @@ class UDPServer(DatagramProtocol):
                         continue
                     
                     # Remove their signal from the audio
-                    client_pcm = combined_pcm - client_signal
+                    client_pcm = combined_pcm #- client_signal
 
                     # Convert from float32 to int16
                     pcm_int16 = client_pcm * (2**15-1)

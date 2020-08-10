@@ -14,7 +14,9 @@ from twisted.web import server, resource
 from database import Database
 from server_udp import UDPServer
 from server_tcp import TCPServerFactory
+import command
 import server_web
+import session_files
 
 # Setup logging
 import sys
@@ -47,20 +49,11 @@ globalLogBeginner.beginLoggingTo(logtargets)
 # Start a logger with a namespace for a particular subsystem of our application.
 log = Logger("server")
 
-
-
-# Define directories
-session_dir = Path("session_files/")
-uploads_dir = Path(session_dir / "uploads/")
-backing_track_dir = Path(session_dir / "backing_tracks/")
-
-# Ensure directories exist
-session_dir.mkdir(exist_ok=True)
-uploads_dir.mkdir(exist_ok=True)
-backing_track_dir.mkdir(exist_ok=True)
+# Create session's required directories
+session_files = session_files.SessionFiles(Path.home())
 
 # Define database filename
-db_filename = session_dir / "database.sqlite3"
+db_filename = session_files.session_dir / "database.sqlite3"
 
 # Create the database
 database = Database(db_filename)
@@ -68,18 +61,24 @@ database = Database(db_filename)
 # Create UDP server
 udp_server = UDPServer()
 
-# TEST Audio playback
-def play_audio():
-    filename = "psallite.opus"
-    #filename="left-right-demo-5s.opus"
-    udp_server.play_audio(filename)
-reactor.callWhenRunning(play_audio)
+# Create a Command instance
+command = command.Command(
+    session_files,
+    database,
+    udp_server
+)
+# # TEST Audio playback
+# def play_audio():
+#     filenames = ["psallite.opus"]
+#     #filename="left-right-demo-5s.opus"
+#     command.play_for_everyone(1,[])
+# reactor.callWhenRunning(play_audio)
 
 # Create the web-server based interface
 www_server, eventsource_resource, backing_track_resource = server_web.create_web_interface(
-    uploads_dir,
-    backing_track_dir,
-    database
+    session_files,
+    database,
+    command
 )
 
 # Create TCP server factory
@@ -87,6 +86,7 @@ tcp_server_factory = TCPServerFactory(
     eventsource_resource,
     backing_track_resource
 )
+
 
 
 endpoints.serverFromString(reactor, "tcp:1234").listen(tcp_server_factory)
