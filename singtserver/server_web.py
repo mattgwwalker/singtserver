@@ -14,9 +14,16 @@ def create_web_interface(session_files, database, command):
     file_resource = File(www_dir)
     root = file_resource
 
+    # Session files (as File resource)
+    session_files_resource = File(session_files.session_dir)
+    session_files_resource.contentTypes[".opus"] = "audio/ogg" 
+    root.putChild(b"session_files", session_files_resource)
+    
+    # Event source
     eventsource_resource = EventSource()
     root.putChild(b"eventsource", eventsource_resource)
 
+    # Backing tracks
     backing_track_resource = BackingTrack(
         session_files,
         database,
