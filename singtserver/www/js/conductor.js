@@ -129,7 +129,63 @@ SINGT.wireup.page_playback = function(){
         });
 
         return false; // Do not reload page
-    });    
+    });
+
+    $("#recording_button_prepare").click(function() {
+        console.log("'Prepare for Recording' button clicked");
+
+        // Get state of combo selection
+        var combo_selection = undefined
+        if ($("#playback_combo_track_only").is(":checked")) {
+            combo_selection = "track_only";
+        } else if ($("#playback_combo_mix").is(":checked")) {
+            combo_selection = "mix";
+        } else if ($("#playback_combo_takes_only").is(":checked")) {
+            combo_selection = "takes_only";
+        }
+        console.log("combo_selection:", combo_selection);
+
+        // Get selected track
+        track = $("#playback_select_tracks").val();
+        console.log("track:", track);
+
+        // Get selected takes
+        takes = $("#playback_multiselect_takes").val()
+        console.log("takes:", takes);
+
+        // Form command
+        command = {
+            "command": "prepare_for_recording"
+        }
+        if (combo_selection=="track_only" ||
+            combo_selection=="mix") {
+            command["track_id"] = track;
+        }
+        if (combo_selection=="mix" ||
+            combo_selection=="takes_only") {
+            command["take_ids"] = takes;
+        }
+        json_command = JSON.stringify(command);
+        
+        // Send command
+        console.log("command:", command);
+        $.ajax({
+            type: 'POST',
+            url: 'command',
+            data: json_command,
+            dataType: "json",
+            contentType: "application/json",
+            success: function(msg) {
+                console.log(msg);
+            },
+            error: function(jqXHR, st, error) {
+                // Hopefully we should never reach here
+                alert("FAILED to send command 'prepare_for_recording'");
+            }
+        });
+        return false; // Do not reload page
+    });
+
 };
 
 SINGT.wireup.forms = function() {

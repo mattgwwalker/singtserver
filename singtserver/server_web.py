@@ -57,26 +57,46 @@ class WebCommand(resource.Resource):
     def register_command(self, command, function):
         self.commands[command] = function
         
-    def _success(self):
+    def _success(self, data, request):
+        request.setResponseCode(200)
         result = {
-            "result": "success"
+            "result": "success",
+            "data": str(data),
         }
-
         result_json = json.dumps(result).encode("utf-8")
+        request.write(result_json)
+        request.finish()
 
-        return result_json
+    def _make_success(self, request):
+        def f(data):
+            self._success(data, request)
+        return f
 
-    def _failure(self, error):
+    def _failure(self, error, request, finish=False):
+        request.setResponseCode(500)
         result = {
             "result":"failure",
             "error":str(error)
         }
-        request.write(json.dumps(result).encode("utf-8"))
-        request.finish()
+        result_json = json.dumps(result).encode("utf-8")
+        request.write(result_json)
+        if finish:
+            request.finish()
+
+    def _make_failure(self, request, message = None, raise_exception=False):
+        def f(error):
+            nonlocal message
+            if message is None:
+                message = error
+            self._failure(message, request, finish=not raise_exception)
+            if raise_exception:
+                raise error
+        return f
             
     def _register_commands(self):
         self.register_command("play_for_everyone", self._command_play_for_everyone)
         self.register_command("stop_for_everyone", self._command_stop_for_everyone)
+        self.register_command("prepare_for_recording", self._command_prepare_for_recording)
 
     def _command_play_for_everyone(self, content, request):
         try:
@@ -91,7 +111,7 @@ class WebCommand(resource.Resource):
 
         try:
             self._command.play_for_everyone(track_id, take_ids)
-            return self._success()
+            return self._success("Started playing for everyone")
         except Exception as e:
             return self._failure(e)
             raise
@@ -99,7 +119,34 @@ class WebCommand(resource.Resource):
     def _command_stop_for_everyone(self, content, request):
         try:
             self._command.stop_for_everyone()
-            return self._success()
+            return self._success("Stopped playing for everyone")
         except Exception as e:
             return self._failure(e)
             raise
+
+    def _command_prepare_for_recording(self, content, request):
+        try:
+            track_id = int(content["track_id"])
+        except KeyError:
+            track_id = None
+
+        try:
+            take_ids = [int(id) for id in content["take_ids"]]
+        except KeyError:
+            take_ids = []
+
+        try:
+            d = self._command.prepare_combination(track_id, take_ids)
+            d.addCallback(self._make_success(request))
+            d.addErrback(self._make_failure(
+                request,
+                message="Failed during preparation of combination",
+                raise_exception=True
+            ))
+            
+        except Exception as e:
+            message = "Failed to prepare combination"
+            self._failure(message, request, finish=False)
+            raise
+
+        return server.NOT_DONE_YET
