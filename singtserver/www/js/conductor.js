@@ -224,7 +224,7 @@ SINGT.participants.update = function() {
             // participants
             let participantsHtml = '';
             for (participant of participants) {
-                participantsHtml += '<li class="list-group-item"><img src="./icons/person-badge.svg" alt="" width="32" height="32" title="Person" class="mr-2">' + participant + '</li>';
+                participantsHtml += '<li class="list-group-item"><img src="./icons/person-badge.svg" alt="" width="32" height="32" title="Person" class="mr-2">' + participant + '<div class="form-check float-right"><input class="form-check-input position-static" type="checkbox" checked="checked" id="blankCheckbox" value="Something" aria-label="Include '+participant+'"></div></li>';
             }
             $("#participants").html(participantsHtml).removeClass('d-none');
             $('#nav-participants').text(participants.length).removeClass('d-none');
@@ -307,8 +307,9 @@ SINGT.backing_tracks.update = function() {
     // Go through each of the entries and add in a row to the tracks
     // pages, the recording page, and the playback page
     for (track_entry of parsed_data) {
-        track_id = track_entry[0]
-        track_name = track_entry[1]
+        console.log("track_entry:", track_entry);
+        track_id = track_entry["id"]
+        track_name = track_entry["track_name"]
         
         tracksHtml += '<li class="list-group-item"><img src="./icons/file-music.svg" alt="" width="32" height="32" title="Track" class="mr-2">' + track_name + '</li>';
 

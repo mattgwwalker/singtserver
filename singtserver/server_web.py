@@ -143,7 +143,7 @@ class WebCommand(resource.Resource):
             take_ids = []
 
         try:
-            d = self._command.prepare_combination(track_id, take_ids)
+            d = self._command.prepare_for_recording(track_id, take_ids)
             d.addCallback(self._make_success(request))
             d.addErrback(self._make_failure(
                 request,
@@ -155,5 +155,8 @@ class WebCommand(resource.Resource):
             message = "Failed to prepare combination"
             self._failure(message, request, finish=False)
             raise
+
+        # Get download location of track_id
+        
 
         return server.NOT_DONE_YET

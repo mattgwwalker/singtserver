@@ -57,6 +57,7 @@ db_filename = session_files.session_dir / "database.sqlite3"
 
 # Create the database
 database = Database(db_filename)
+session_files.set_database(database)
 
 # Create UDP server
 udp_server = UDPServer()
@@ -86,7 +87,7 @@ tcp_server_factory = TCPServerFactory(
     eventsource_resource,
     backing_track_resource
 )
-
+command.set_tcp_server_factory(tcp_server_factory)
 
 
 endpoints.serverFromString(reactor, "tcp:1234").listen(tcp_server_factory)

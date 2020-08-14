@@ -1,3 +1,4 @@
+from twisted.internet.defer import gatherResults
 from twisted.logger import Logger
 
 # Start a logger with a namespace for a particular subsystem of our application.
@@ -11,29 +12,30 @@ class Command:
                  udp_server):
         self._database = database
         self._session_files = session_files
+        self._tcp_server_factory = None
         self._udp_server = udp_server
+
+    def set_tcp_server_factory(self, tcp_server_factory):
+        self._tcp_server_factory = tcp_server_factory
 
         
     def play_for_everyone(self, track_id, take_ids):
         if track_id is None and len(take_ids) == 0:
             raise Exception("'Play for everyone' requires at least a track ID or a take ID")
         
-        # Get filename of the track
-        track_filename = self._session_files.get_track_filename(track_id)
-        print("track_filename:", track_filename)
+        # Get path of the track
+        track_path = self._session_files.get_track_path(track_id)
         
-        # Get filenames of the takes
-        take_filenames = [self._session_files.get_take_filename(take_id)
-                          for take_id in take_ids]
-        print("take_filenames:", take_filenames)
+        # Get paths of the takes
+        take_paths = [self._session_files.get_take_path(take_id)
+                      for take_id in take_ids]
 
-        # Combine filenames
-        filenames = take_filenames
-        filenames.append(track_filename)
-        print("filenames:", filenames)
+        # Combine paths
+        paths = take_paths
+        paths.append(track_path)
         
         # Request ServerUDP to play the audio
-        self._udp_server.play_audio(filenames)
+        self._udp_server.play_audio(paths)
 
         
     def stop_for_everyone(self):
@@ -63,5 +65,54 @@ class Command:
         d.addCallback(on_success)
         d.addErrback(on_error)
         return d
-        
 
+
+    def request_download(self, track_id=None, take_ids=[]):
+        # List of deferreds to gather
+        ds = []
+        
+        # Track
+        if track_id is not None:
+            track_path = self._session_files.get_track_relpath(track_id)
+            d_track_audio_id = self._database.get_track_audio_id(track_id)
+            def request_download_track(audio_id):
+                return self._tcp_server_factory.broadcast_download_request(
+                    audio_id,
+                    track_path
+                )
+            d_track_audio_id.addCallback(request_download_track)
+            ds.append(d_track_audio_id)
+
+        # Takes
+        for take_id in take_ids:
+            take_path = self._session_files.get_take_relpath(take_id)
+            d_take_audio_id = self._database.get_take_audio_id(take_id)
+            def request_download_take(audio_id):
+                this_take_path = take_path
+                return self._tcp_server_factory.broadcast_download_request(
+                    audio_id,
+                    this_take_path
+                )
+            d_take_audio_id.addCallback(request_download_take)
+            ds.append(d_take_audio_id)
+
+        # Gather deferreds
+        d = gatherResults(ds)
+        def on_error(error):
+            log.warn("Error in requesting client downloads: "+str(error))
+            return error
+        d.addErrback(on_error)
+            
+        return d
+
+    def prepare_for_recording(self, track_id, take_ids):
+        d_combo_id = self.prepare_combination(track_id, take_ids)
+        d_requested_download = self.request_download(track_id, take_ids)
+
+        d = gatherResults([d_combo_id, d_requested_download])
+        def on_error(error):
+            log.warn("Error in preparing for recording: "+str(error))
+            return error
+        d.addErrback(on_error)
+        
+        return d

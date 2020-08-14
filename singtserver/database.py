@@ -10,9 +10,24 @@ class Database:
         # Note if database already exists
         database_exists = db_filename.is_file()
 
+        # Callback for every connection that is established to the
+        # database
+        def setup_connection(connection):
+            # Turn on foreign key constraints
+            cursor = connection.cursor()
+            cursor.execute("PRAGMA foreign_keys = ON;")
+
+            # # Turn on column names in rows
+            # import sqlite3
+            # connection.row_factory = sqlite3.Row
+        
         # Open a connection to the database.  SQLite will create the file if
         # it doesn't already exist.
-        self.dbpool = adbapi.ConnectionPool("sqlite3", db_filename)
+        self.dbpool = adbapi.ConnectionPool(
+            "sqlite3",
+            db_filename,
+            cp_openfun=setup_connection
+        )
 
         # If the database did not exist, initialise the database
         if not database_exists:
@@ -50,9 +65,6 @@ class Database:
         # See answers to https://stackoverflow.com/questions/63356820/sql-select-from-many-to-one
         # and https://stackoverflow.com/a/5766293/562930
         def get_combo(cursor):
-            # Turn on foreign key constraints
-            cursor.execute("PRAGMA foreign_keys = ON;")
-            
             print("track_id:", track_id)
             print("take_ids:", take_ids)
 
@@ -70,7 +82,6 @@ class Database:
                         seq=",".join(["?"]*len(take_ids))
                     )
                 )
-                print("sql:",sql)
                 cursor.execute(
                     sql,
                     (*take_ids, len(take_ids))
@@ -86,7 +97,6 @@ class Database:
                     "       FROM CombinationsDetail\n"+
                     "       WHERE combinationId = Combinations.id)"
                 )
-                print("sql:",sql)
                 cursor.execute(
                     sql,
                     (track_id, )
@@ -99,12 +109,10 @@ class Database:
                        "      AND id IN\n"+
                        "      (SELECT combinationId\n"+
                        "       FROM CombinationsDetail\n"+
-                       #"       WHERE combinationId = Combinations.id\n"+
                        "       GROUP BY combinationId\n" +
                        "       HAVING SUM(CASE WHEN takeId IN ({seq}) THEN 1 ELSE 0 END) = ?)").format(
                            seq=",".join(['?']*len(take_ids))
                        )
-                print("sql:",sql)
                 cursor.execute(
                     sql,
                     (track_id, *take_ids, len(take_ids))
@@ -137,6 +145,10 @@ class Database:
 
 
     def add_combination(self, track_id=None, take_ids=[]):
+        """Adds combination into database.
+
+        Returns combo_id.
+        """
         # Sanity check arguments
         if (track_id is None
             and len(take_ids) == 0):
@@ -146,14 +158,15 @@ class Database:
             )
 
         # Create combination in database
-        def _add_combo(cursor):
-            # Turn on foreign key constraints
-            cursor.execute("PRAGMA foreign_keys = ON;")
+        def add_combo(cursor):
+            # Create audio id
+            cursor.execute("INSERT INTO AudioIdentifiers DEFAULT VALUES")
+            audio_id = cursor.lastrowid
             
             print("track_id:", track_id)
             cursor.execute(
-                "INSERT INTO Combinations (backingTrackId) VALUES (?)",
-                (track_id,)
+                "INSERT INTO Combinations (audioId, backingTrackId) VALUES (?, ?)",
+                (audio_id, track_id)
             )
             combo_id = cursor.lastrowid
 
@@ -166,7 +179,7 @@ class Database:
                 
             return combo_id
                 
-        d = self.dbpool.runInteraction(_add_combo)
+        d = self.dbpool.runInteraction(add_combo)
 
         def on_success(data):
             log.info("Successfully added combination to database; combination id: "+str(data))
@@ -180,3 +193,48 @@ class Database:
 
         return d
         
+
+    def get_track_audio_id(self, track_id):
+        """Returns track's audio id or None."""
+        def execute_sql(cursor):
+            cursor.execute("SELECT audioId FROM BackingTracks WHERE id = ?",
+                           (track_id,))
+            results = cursor.fetchone()
+            if results is None:
+                return None
+            else:
+                return results[0]
+            
+        d = self.dbpool.runInteraction(execute_sql)
+        def on_error(error):
+            log.warn("Failed to get audio ID for track id ({track_id}): "+
+                     str(error)
+            )
+            return error
+        d.addErrback(on_error)
+
+        return d
+        
+
+    def get_take_audio_id(self, take_id):
+        """Returns take's audio id or None."""
+        def execute_sql(cursor):
+            cursor.execute("SELECT audioId FROM Takes WHERE id = ?",
+                           (take_id,))
+            results = cursor.fetchone()
+            if results is None:
+                return None
+            else:
+                return results[0]
+            
+        d = self.dbpool.runInteraction(execute_sql)
+        def on_error(error):
+            log.warn("Failed to get audio ID for take id ({take_id}): "+
+                     str(error)
+            )
+            return error
+        d.addErrback(on_error)
+
+        return d
+
+            

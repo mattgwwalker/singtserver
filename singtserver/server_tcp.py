@@ -171,7 +171,21 @@ class TCPServer(protocol.Protocol):
             "update_participants",
             json.dumps(data)
         )
-            
+
+    def send_message(self, msg):
+        msg_as_bytes = msg.encode("utf-8")
+        len_as_short = struct.pack("H", len(msg))
+        encoded_msg = len_as_short + msg_as_bytes
+        self.transport.write(encoded_msg)
+
+    def send_download_request(self, audio_id, partial_url):
+        command = {
+            "command": "download",
+            "audio_id": str(audio_id),
+            "partial_url": str(partial_url)
+        }
+        command_json = json.dumps(command)
+        self.send_message(command_json)
 
  
 class TCPServerFactory(protocol.Factory):
@@ -181,6 +195,12 @@ class TCPServerFactory(protocol.Factory):
             self.usernames = {}
             
     def __init__(self, eventsource, backing_track_resource):
+        # Create a list of protocol instances, used for broadcasting
+        # to all clients
+        self._protocols = []
+        
+
+        # TODO: Is this really the best way to implement this?
         self._shared_context = TCPServerFactory.SharedContext(eventsource)
         self._shared_context.eventsource.add_initialiser(
             self.initialiseParticipants
@@ -190,7 +210,9 @@ class TCPServerFactory(protocol.Factory):
         )
     
     def buildProtocol(self, addr):
-        return TCPServer(self._shared_context)
+        protocol = TCPServer(self._shared_context)
+        self._protocols.append(protocol)
+        return protocol
 
     def startFactory(self):
         print("Server started")
@@ -205,3 +227,8 @@ class TCPServerFactory(protocol.Factory):
         d = defer.Deferred()
         d.callback(("update_participants", json_data))
         return d
+
+    def broadcast_download_request(self, audio_id, partial_url):
+        for protocol in self._protocols:
+            protocol.send_download_request(audio_id, partial_url)
+        
