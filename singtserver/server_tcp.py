@@ -194,13 +194,14 @@ class TCPServerFactory(protocol.Factory):
             self.eventsource = eventsource
             self.usernames = {}
             
-    def __init__(self, eventsource, backing_track_resource):
+    def __init__(self, web_server):
         # Create a list of protocol instances, used for broadcasting
         # to all clients
         self._protocols = []
-        
 
         # TODO: Is this really the best way to implement this?
+        eventsource = web_server.eventsource_resource
+        backing_track_resource = web_server.backing_track_resource
         self._shared_context = TCPServerFactory.SharedContext(eventsource)
         self._shared_context.eventsource.add_initialiser(
             self.initialiseParticipants

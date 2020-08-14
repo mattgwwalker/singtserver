@@ -15,7 +15,7 @@ from database import Database
 from server_udp import UDPServer
 from server_tcp import TCPServerFactory
 import command
-import server_web
+from server_web import WebServer
 import session_files
 
 # Setup logging
@@ -68,30 +68,24 @@ command = command.Command(
     database,
     udp_server
 )
-# # TEST Audio playback
-# def play_audio():
-#     filenames = ["psallite.opus"]
-#     #filename="left-right-demo-5s.opus"
-#     command.play_for_everyone(1,[])
-# reactor.callWhenRunning(play_audio)
 
 # Create the web-server based interface
-www_server, eventsource_resource, backing_track_resource = server_web.create_web_interface(
+web_server = WebServer(
     session_files,
     database,
     command
 )
+command.set_web_server(web_server)
 
 # Create TCP server factory
-tcp_server_factory = TCPServerFactory(
-    eventsource_resource,
-    backing_track_resource
-)
+tcp_server_factory = TCPServerFactory(web_server)
 command.set_tcp_server_factory(tcp_server_factory)
 
 
 endpoints.serverFromString(reactor, "tcp:1234").listen(tcp_server_factory)
 reactor.listenUDP(12345, udp_server)
-reactor.listenTCP(8080, www_server)
+www_port = 8080
+reactor.listenTCP(www_port, web_server.site)
+web_server.set_www_port(www_port)
 
 reactor.run()

@@ -12,11 +12,17 @@ class Command:
                  udp_server):
         self._database = database
         self._session_files = session_files
-        self._tcp_server_factory = None
         self._udp_server = udp_server
+        self._tcp_server_factory = None
+        self._web_server = None
+
 
     def set_tcp_server_factory(self, tcp_server_factory):
         self._tcp_server_factory = tcp_server_factory
+
+
+    def set_web_server(self, web_server):
+        self._web_server = web_server
 
         
     def play_for_everyone(self, track_id, take_ids):
@@ -74,6 +80,11 @@ class Command:
         # Track
         if track_id is not None:
             track_path = self._session_files.get_track_relpath(track_id)
+            track_path = (
+                self._web_server.get_partial_url_prefix() +
+                str(track_path)
+            )
+            
             d_track_audio_id = self._database.get_track_audio_id(track_id)
             def request_download_track(audio_id):
                 return self._tcp_server_factory.broadcast_download_request(
@@ -86,6 +97,11 @@ class Command:
         # Takes
         for take_id in take_ids:
             take_path = self._session_files.get_take_relpath(take_id)
+            take_path = (
+                self._web_server.get_partial_url_prefix() +
+                str(take_path)
+            )
+            
             d_take_audio_id = self._database.get_take_audio_id(take_id)
             def request_download_take(audio_id):
                 this_take_path = take_path

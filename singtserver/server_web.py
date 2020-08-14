@@ -8,37 +8,47 @@ from twisted.web.static import File
 from backing_track import BackingTrack
 from singtcommon import EventSource
 
-def create_web_interface(session_files, database, command):
-    # Create the web resources
-    www_dir = pkg_resources.resource_filename("singtserver", "www")
-    file_resource = File(www_dir)
-    root = file_resource
+class WebServer:
+    def __init__(self, session_files, database, command):
+        # Create the web resources
+        www_dir = pkg_resources.resource_filename("singtserver", "www")
+        file_resource = File(www_dir)
+        self.root = file_resource
 
-    # Session files (as File resource)
-    session_files_resource = File(session_files.session_dir)
-    session_files_resource.contentTypes[".opus"] = "audio/ogg" 
-    root.putChild(b"session_files", session_files_resource)
-    
-    # Event source
-    eventsource_resource = EventSource()
-    root.putChild(b"eventsource", eventsource_resource)
+        # Session files (as File resource)
+        session_files_resource = File(session_files.session_dir)
+        session_files_resource.contentTypes[".opus"] = "audio/ogg"
+        self.session_files_location = "session_files"
+        self.root.putChild(
+            self.session_files_location.encode("utf-8"),
+            session_files_resource
+        )
 
-    # Backing tracks
-    backing_track_resource = BackingTrack(
-        session_files,
-        database,
-        eventsource_resource
-    )
-    root.putChild(b"backing_track", backing_track_resource)
+        # Event source
+        self.eventsource_resource = EventSource()
+        self.root.putChild(b"eventsource", self.eventsource_resource)
 
-    # Create a command resource
-    command_resource = WebCommand(command)
-    root.putChild(b"command", command_resource)
-    
-    # Create a web server
-    site = server.Site(root)
+        # Backing tracks
+        self.backing_track_resource = BackingTrack(
+            session_files,
+            database,
+            self.eventsource_resource
+        )
+        self.root.putChild(b"backing_track", self.backing_track_resource)
 
-    return site, eventsource_resource, backing_track_resource
+        # Create a command resource
+        self.command_resource = WebCommand(command)
+        self.root.putChild(b"command", self.command_resource)
+
+        # Create a web server
+        self.site = server.Site(self.root)
+        self.www_port = None
+
+    def set_www_port(self, port):
+        self.www_port = port
+        
+    def get_partial_url_prefix(self):
+        return ":"+str(self.www_port)+"/"+self.session_files_location+"/"
 
 
 class WebCommand(resource.Resource):
