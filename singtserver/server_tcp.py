@@ -20,47 +20,19 @@ class TCPServer(protocol.Protocol):
         self._shared_context = shared_context
         self.username = None
 
+        self._commands = {}
+        self._register_commands()
+        
+    def _register_commands(self):
+        self.register_command("announce", self._command_announce)
+        self.register_command("update_downloaded", self._command_update_downloaded)
 
+    def register_command(self, command, function):
+        self._commands[command] = function
+        
     def connectionMade(self):
         self._tcp_packetizer = TCPPacketizer(self.transport)
-
         
-    def announce(self, json_data):
-        """Announces username, which is then stored in the shared context.
-        Returns True if username is unused."""
-
-        # Extract the username
-        username = json_data["username"]
-
-        # Check if the username is already registered
-        if username in self._shared_context.usernames:
-            # The username already registered; disconnect client
-            print("Username '{:s}' already in use".format(username))
-            msg = {
-                "error": (
-                    "Username '{:s}' already in use.  ".format(username)+
-                    "Try again with a different username."
-                )
-            }
-            self.transport.write(json.dumps(msg).encode("utf-8"))
-            self.transport.loseConnection()
-            return False
-
-        # Store username and this protocol instance in the shared
-        # context
-        self.username = username
-        print("User '{:s}' has just announced themselves".format(username))
-        self._shared_context.usernames[username] = self
-
-        # Publish an event to update the web interface
-        data = {
-            "participants": list(self._shared_context.usernames.keys())
-        }
-        self._shared_context.eventsource.publish_to_all("update_participants", json.dumps(data))
-        
-        return True
-
-
     def send_file(self, filename):
         f = open(filename, "rb")
 
@@ -96,26 +68,25 @@ class TCPServer(protocol.Protocol):
         try:
             json_data = json.loads(msg)
         except Exception as e:
-            print("Failed to parse message as JSON.")
-            print("msg:", msg)
-            print("Exception:",e)
-            return
+            raise Exception(f"Failed to parse message ({msg}) as JSON: "+str(e))
 
-        # Execute commands
+        # Get command
         try:
             command = json_data["command"]
         except KeyError:
-            print("Failed to find 'command' key in JSON")
-            print("msg:", msg)
-            return
-        
-        if command=="announce":
-            self.announce(json_data)
-        else:
-            print("Unknown command ({:s})".format(command))
-            print("msg:", msg)
-            return
+            raise Exception(f"Failed to find 'command' key in message ({msg})")
 
+        # Get function
+        try:
+            function = self._commands[command]
+        except KeyError:
+            raise Exception("No function was registered against the command '{command}'")
+
+        # Execute function
+        try:
+            function(json_data)
+        except Exception as e:
+            raise Exception("Exception during execution of function for command '{command}': "+str(e))
         
     # Data received may be a partial package, or it may be multiple
     # packets joined together.
@@ -152,6 +123,44 @@ class TCPServer(protocol.Protocol):
         }
         command_json = json.dumps(command)
         self.send_message(command_json)
+
+    def _command_announce(self, json_data):
+        """Announces username, which is then stored in the shared context.
+        Returns True if username is unused."""
+
+        # Extract the username
+        username = json_data["username"]
+
+        # Check if the username is already registered
+        if username in self._shared_context.usernames:
+            # The username already registered; disconnect client
+            print("Username '{:s}' already in use".format(username))
+            msg = {
+                "error": (
+                    "Username '{:s}' already in use.  ".format(username)+
+                    "Try again with a different username."
+                )
+            }
+            self.transport.write(json.dumps(msg).encode("utf-8"))
+            self.transport.loseConnection()
+            return False
+
+        # Store username and this protocol instance in the shared
+        # context
+        self.username = username
+        print("User '{:s}' has just announced themselves".format(username))
+        self._shared_context.usernames[username] = self
+
+        # Publish an event to update the web interface
+        data = {
+            "participants": list(self._shared_context.usernames.keys())
+        }
+        self._shared_context.eventsource.publish_to_all("update_participants", json.dumps(data))
+        
+        return True
+
+    def _command_update_downloaded(self, json_data):
+        print("In _command_update_downloaded, with json_data: ", json_data)
 
  
 class TCPServerFactory(protocol.Factory):
