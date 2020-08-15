@@ -128,18 +128,22 @@ class WebCommand(resource.Resource):
 
         try:
             self._command.play_for_everyone(track_id, take_ids)
-            return self._success("Started playing for everyone")
+            self._success("Started playing for everyone", request)
         except Exception as e:
-            return self._failure(e)
+            self._failure(e, request, finish=False)
             raise
+
+        return server.NOT_DONE_YET
             
     def _command_stop_for_everyone(self, content, request):
         try:
             self._command.stop_for_everyone()
-            return self._success("Stopped playing for everyone")
+            self._success("Stopped playing for everyone", request)
         except Exception as e:
-            return self._failure(e)
+            self._failure(e, request, finish=False)
             raise
+
+        return server.NOT_DONE_YET
 
     def _command_prepare_for_recording(self, content, request):
         try:
@@ -167,6 +171,5 @@ class WebCommand(resource.Resource):
             raise
 
         # Get download location of track_id
-        
 
         return server.NOT_DONE_YET

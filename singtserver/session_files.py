@@ -1,7 +1,7 @@
 class SessionFiles:
     def __init__(self, root_dir):
         # Define directories
-        self.session_dir = root_dir / "session_files"
+        self.session_dir = root_dir / "singtserver_session_files"
         self.uploads_dir = self.session_dir / "uploads"
         self.tracks_dir = self.session_dir / "tracks"
         self.takes_dir = self.session_dir / "takes"

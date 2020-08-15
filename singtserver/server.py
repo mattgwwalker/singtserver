@@ -24,7 +24,10 @@ from twisted.logger import Logger, LogLevel, LogLevelFilterPredicate, \
     textFileLogObserver, FilteringLogObserver, globalLogBeginner
 
 
-logfile = open("server.log", 'w')
+# Create session's required directories
+session_files = session_files.SessionFiles(Path.home())
+
+logfile = open(session_files.session_dir / "server.log", 'w')
 logtargets = []
 
 # Set up the log observer for stdout.
@@ -48,9 +51,6 @@ globalLogBeginner.beginLoggingTo(logtargets)
 
 # Start a logger with a namespace for a particular subsystem of our application.
 log = Logger("server")
-
-# Create session's required directories
-session_files = session_files.SessionFiles(Path.home())
 
 # Define database filename
 db_filename = session_files.session_dir / "database.sqlite3"
