@@ -5,26 +5,26 @@ from twisted.internet import defer
 from twisted.internet import protocol
 from twisted.logger import Logger
 
+from singtcommon import TCPPacketizer
+
 # Start a logger with a namespace for a particular subsystem of our application.
 log = Logger("server_tcp")
 
 
 # An instance of this class is created for each client connection.
 class TCPServer(protocol.Protocol):
-    class State:
-        STARTING = 10
-        CONTINUING = 20
-    
     def __init__(self, shared_context):
         super()
-        self._buffer = b""
-        self._state = TCPServer.State.STARTING
-        self._length = None
+        self._tcp_packetizer = None
 
         self._shared_context = shared_context
         self.username = None
 
 
+    def connectionMade(self):
+        self._tcp_packetizer = TCPPacketizer(self.transport)
+
+        
     def announce(self, json_data):
         """Announces username, which is then stored in the shared context.
         Returns True if username is unused."""
@@ -120,47 +120,13 @@ class TCPServer(protocol.Protocol):
     # Data received may be a partial package, or it may be multiple
     # packets joined together.
     def dataReceived(self, data):
-        print("Received data:", data)
+        packets = self._tcp_packetizer.decode(data)
 
-        # Combine current data with buffer
-        data = self._buffer + data
+        for packet in packets:
+            print("packet decoded:", packet)
+            self.process(packet)
 
-        while len(data) > 0:
-            #print("Considering data:", data)
             
-            if self._state == TCPServer.State.STARTING:
-                # Read the first two bytes as a short integer
-                self._length = struct.unpack("H",data[0:2])[0]
-                #print("length:",self._length)
-
-                # Remove the short from the data
-                data = data[2:]
-
-                # Move to CONTINUING
-                self._state = TCPServer.State.CONTINUING
-
-            if self._state == TCPServer.State.CONTINUING:
-                # Do we have all the required characters in the current data?
-                if len(data) >= self._length:
-                    # Separate the current message
-                    msg = data[:self._length]
-
-                    # Process the message
-                    self.process(msg.decode("utf-8"))
-
-                    # Remove the current message from any remaining data
-                    data = data[self._length:]
-
-                    # Move back to STARTING
-                    self._state = TCPServer.State.STARTING
-                else:
-                    # We do not have sufficient characters.  Store them in
-                    # the buffer till next time we receive data.
-                    #print("We do not have sufficient characters; waiting")
-                    #print("len(data):", len(data))
-                    self._buffer = data
-                    data = ""
-
     def connectionLost(self, reason):
         print(f"Connection lost to user '{self.username}':", reason)
         del self._shared_context.usernames[self.username]
