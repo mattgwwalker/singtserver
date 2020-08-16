@@ -189,9 +189,9 @@ class TCPServerFactory(protocol.Factory):
         eventsource = web_server.eventsource_resource
         backing_track_resource = web_server.backing_track_resource
         self._shared_context = TCPServerFactory.SharedContext(context)
-        self._shared_context.eventsource.add_initialiser(
-            self.initialiseParticipants
-        )
+        # self._shared_context.eventsource.add_initialiser(
+        #     self.initialiseParticipants
+        # )
         self._shared_context.eventsource.add_initialiser(
             backing_track_resource.initialise_eventsource
         )
@@ -227,6 +227,8 @@ class Participants:
         self._eventsource = context["web_server"].eventsource_resource
         self._data_by_id = {}
 
+        self._eventsource.add_initialiser(self.eventsource_initialiser)
+
         
     def assign(self, client_id, name):
         """Assigns name to client_id, overwriting if it exists already."""
@@ -236,12 +238,17 @@ class Participants:
         d = self._db.assign_participant(client_id, name)
 
 
-
-    def get_id(self, name):
-        """Returns the ID of a given name.
-
-        Returns None if the name doesn't exist.
-
-        """
-        return self._db.get_participant_id(name)
+    def get_list(self):
+        """Returns list of participants."""
+        return self._db.get_participants()
         
+
+    def eventsource_initialiser(self):
+        d = self.get_list()
+        def on_success(participants):
+            event = "update_participants"
+            participants_json = json.dumps(participants)
+            return (event, participants_json)
+        d.addCallback(on_success)
+
+        return d

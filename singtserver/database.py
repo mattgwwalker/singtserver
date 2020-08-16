@@ -250,10 +250,31 @@ class Database:
 
         d = self.dbpool.runInteraction(execute_sql)
         def on_error(error):
-            log.warn("Failed to add participant given name '{name}' and id '{client_id}': "+
-                     str(error)
+            log.warn(
+                "Failed to add participant given name '{name}' and id '{client_id}': "+
+                str(error)
             )
             return error
         d.addErrback(on_error)
 
         return d
+
+    
+    def get_participants(self):
+        def execute_sql(cursor):
+            cursor.execute("SELECT id, participantName FROM Participants")
+            rows = cursor.fetchall()
+            results = [{"id":id_, "name":name} for id_, name in rows]
+            return results
+
+        d = self.dbpool.runInteraction(execute_sql)
+        def on_error(error):
+            log.warn(
+                "Failed to get participant list: "+
+                str(error)
+            )
+            return error
+        d.addErrback(on_error)
+
+        return d
+        

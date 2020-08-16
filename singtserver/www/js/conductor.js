@@ -205,34 +205,28 @@ SINGT.wireup.forms = function() {
 SINGT.participants = {};
 SINGT.participants.update = function() {
     console.log(event);
-    let parsed_data = JSON.parse(event.data);
-    console.log(parsed_data);
-
-    if ("participants" in parsed_data) {
-        participants = parsed_data["participants"];
+    let participants = JSON.parse(event.data);
+    console.log(participants);
         
-        $('#participants').addClass('d-none');
-        $('#no_participants').addClass('d-none');
-        $('#nav-participants').addClass('d-none');
+    $('#participants').addClass('d-none');
+    $('#no_participants').addClass('d-none');
+    $('#nav-participants').addClass('d-none');
         
 
-        // If there aren't any participants, state that
-        if (participants.length == 0) {
-            $('#no_participants').removeClass('d-none');
-        } else {	
-            // Otherwise, form an unordered list with the names of the
-            // participants
-            let participantsHtml = '';
-            for (participant of participants) {
-                participantsHtml += '<li class="list-group-item"><img src="./icons/person-badge.svg" alt="" width="32" height="32" title="Person" class="mr-2">' + participant + '<div class="form-check float-right"><input class="form-check-input position-static" type="checkbox" checked="checked" id="blankCheckbox" value="Something" aria-label="Include '+participant+'"></div></li>';
-            }
-            $("#participants").html(participantsHtml).removeClass('d-none');
-            $('#nav-participants').text(participants.length).removeClass('d-none');
+    // If there aren't any participants, state that
+    if (participants.length == 0) {
+        $('#no_participants').removeClass('d-none');
+    } else {	
+        // Otherwise, form an unordered list with the names of the
+        // participants
+        let participantsHtml = '';
+        for (participant of participants) {
+            console.log(participant.name)
+            participantsHtml += '<li class="list-group-item"><img src="./icons/person-badge.svg" alt="" width="32" height="32" title="Person" class="mr-2">' + participant.name + '<div class="form-check float-right"><input class="form-check-input position-static" type="checkbox" checked="checked" id="blankCheckbox" value="'+participant.id+'" aria-label="Include '+participant.name+'"></div></li>';
         }
-    } else {
-        console.error('Dude, wheres my car?');
+        $("#participants").html(participantsHtml).removeClass('d-none');
+        $('#nav-participants').text(participants.length).removeClass('d-none');
     }
-    
 };
 
 SINGT.backing_tracks = {};
