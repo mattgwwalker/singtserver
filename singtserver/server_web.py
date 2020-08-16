@@ -161,20 +161,23 @@ class WebCommand(resource.Resource):
             take_ids = []
 
         try:
-            d = self._command.prepare_for_recording(track_id, take_ids)
+            participants = [int(id) for id in content["participants"]]
+        except KeyError:
+            raise Exception("Failed to find 'participants' key in content while preparing for recording")
+
+        try:
+            d = self._command.prepare_for_recording(track_id, take_ids, participants)
             d.addCallback(self._make_success(request))
             d.addErrback(self._make_failure(
                 request,
-                message="Failed during preparation of combination",
+                message="Failed during preparation of recording",
                 raise_exception=True
             ))
             
         except Exception as e:
-            message = "Failed to prepare combination"
+            message = "Failed to prepare for recording"
             self._failure(message, request, finish=False)
             raise
-
-        # Get download location of track_id
 
         return server.NOT_DONE_YET
 

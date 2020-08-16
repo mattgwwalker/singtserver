@@ -153,9 +153,21 @@ SINGT.wireup.page_playback = function(){
         takes = $("#playback_multiselect_takes").val()
         console.log("takes:", takes);
 
+        // Get participants
+        participants =
+            $("#participants")
+            .find("input")
+            .map(function(i, v) {
+                if ($(v).prop("checked")) {
+                    return $(v).val();
+                }
+            })
+            .get(); // get the array
+
         // Form command
         command = {
-            "command": "prepare_for_recording"
+            "command": "prepare_for_recording",
+            "participants": participants
         }
         if (combo_selection=="track_only" ||
             combo_selection=="mix") {

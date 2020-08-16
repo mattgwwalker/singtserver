@@ -65,9 +65,6 @@ class Database:
         # See answers to https://stackoverflow.com/questions/63356820/sql-select-from-many-to-one
         # and https://stackoverflow.com/a/5766293/562930
         def get_combo(cursor):
-            print("track_id:", track_id)
-            print("take_ids:", take_ids)
-
             if track_id is None:
                 assert len(take_ids) > 0
                 sql = (
@@ -123,7 +120,6 @@ class Database:
             # are more than one, we'll just return the first (or None
             # if there aren't any).
             row = cursor.fetchone()
-            print("row:", row)
             if row is None:
                 return None
             combo_id = row[0]

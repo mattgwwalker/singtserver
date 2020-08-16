@@ -124,8 +124,9 @@ class TCPServer(protocol.Protocol):
         Returns True if username is unused."""
 
         # Extract the username
+        print("json_data:",json_data)
         self.username = json_data["username"]
-        self.client_id = json_data["client_id"]
+        self.client_id = int(json_data["client_id"])
 
         self._shared_context.participants.join(
             self.client_id,
@@ -167,9 +168,10 @@ class TCPServerFactory(protocol.Factory):
     def startFactory(self):
         print("Server started")
 
-    def broadcast_download_request(self, audio_id, partial_url):
+    def broadcast_download_request(self, audio_id, partial_url, participants):
         for protocol in self._protocols:
-            protocol.send_download_request(audio_id, partial_url)
+            if protocol.client_id in participants:
+                protocol.send_download_request(audio_id, partial_url)
         
 
 class Participants:
@@ -204,9 +206,14 @@ class Participants:
 
     
     def get_list(self):
-        """Returns list of currently connected participants."""
+        """Returns list of currently connected participants.
+
+        Converts the client id to a string, as Javascript's unable to
+        handle ints larger than 53-bits.
+
+        """
         connected_list = [
-            {"id":id_, "name":name}
+            {"id":str(id_), "name":name}
             for id_, name in self._connected_participants.items()
         ]
         return json.dumps(connected_list)

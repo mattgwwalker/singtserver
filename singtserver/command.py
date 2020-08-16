@@ -71,7 +71,7 @@ class Command:
         return d
 
 
-    def request_download(self, track_id=None, take_ids=[]):
+    def request_download(self, track_id=None, take_ids=[], participants=[]):
         # List of deferreds to gather
         ds = []
         
@@ -87,7 +87,8 @@ class Command:
             def request_download_track(audio_id):
                 return self._tcp_server_factory.broadcast_download_request(
                     audio_id,
-                    track_path
+                    track_path,
+                    participants
                 )
             d_track_audio_id.addCallback(request_download_track)
             ds.append(d_track_audio_id)
@@ -105,7 +106,8 @@ class Command:
                 this_take_path = take_path
                 return self._tcp_server_factory.broadcast_download_request(
                     audio_id,
-                    this_take_path
+                    this_take_path,
+                    participants
                 )
             d_take_audio_id.addCallback(request_download_take)
             ds.append(d_take_audio_id)
@@ -119,9 +121,9 @@ class Command:
             
         return d
 
-    def prepare_for_recording(self, track_id, take_ids):
+    def prepare_for_recording(self, track_id, take_ids, participants):
         d_combo_id = self.prepare_combination(track_id, take_ids)
-        d_requested_download = self.request_download(track_id, take_ids)
+        d_requested_download = self.request_download(track_id, take_ids, participants)
 
         d = gatherResults([d_combo_id, d_requested_download])
         def on_error(error):
