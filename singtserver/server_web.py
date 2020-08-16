@@ -9,7 +9,11 @@ from backing_track import BackingTrack
 from singtcommon import EventSource
 
 class WebServer:
-    def __init__(self, session_files, database, command):
+    def __init__(self, context):
+        session_files = context["session_files"]
+        database = context["database"]
+        command = context["command"]
+        
         # Create the web resources
         www_dir = pkg_resources.resource_filename("singtserver", "www")
         file_resource = File(www_dir)

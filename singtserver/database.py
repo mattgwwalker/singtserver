@@ -238,3 +238,22 @@ class Database:
         return d
 
             
+    def assign_participant(self, client_id, name):
+        """Assigns the name to the client id."""
+
+        def execute_sql(cursor):
+            cursor.execute("INSERT INTO Participants (id, participantName) "+
+                           "VALUES (?, ?)",
+                           (client_id, name))
+            participant_id = cursor.lastrowid
+            return participant_id
+
+        d = self.dbpool.runInteraction(execute_sql)
+        def on_error(error):
+            log.warn("Failed to add participant given name '{name}' and id '{client_id}': "+
+                     str(error)
+            )
+            return error
+        d.addErrback(on_error)
+
+        return d

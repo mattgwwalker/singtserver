@@ -80,13 +80,13 @@ class TCPServer(protocol.Protocol):
         try:
             function = self._commands[command]
         except KeyError:
-            raise Exception("No function was registered against the command '{command}'")
+            raise Exception(f"No function was registered against the command '{command}'")
 
         # Execute function
         try:
             function(json_data)
         except Exception as e:
-            raise Exception("Exception during execution of function for command '{command}': "+str(e))
+            raise Exception(f"Exception during execution of function for command '{command}': "+str(e))
         
     # Data received may be a partial package, or it may be multiple
     # packets joined together.
@@ -130,6 +130,11 @@ class TCPServer(protocol.Protocol):
 
         # Extract the username
         username = json_data["username"]
+        client_id = json_data["client_id"]
+
+        self._shared_context.participants.assign(client_id, username)
+        
+        # PREVIOUS TECHNIQUE
 
         # Check if the username is already registered
         if username in self._shared_context.usernames:
@@ -161,15 +166,21 @@ class TCPServer(protocol.Protocol):
 
     def _command_update_downloaded(self, json_data):
         print("In _command_update_downloaded, with json_data: ", json_data)
+        audio_id = json_data["audio_id"]
 
  
 class TCPServerFactory(protocol.Factory):
     class SharedContext:
-        def __init__(self, eventsource):
-            self.eventsource = eventsource
+        def __init__(self, context):
+            self.eventsource = context["web_server"].eventsource_resource
             self.usernames = {}
             
-    def __init__(self, web_server):
+            self.participants = Participants(context)
+            
+    def __init__(self, context):
+        self._context = context
+        web_server = self._context["web_server"]
+        
         # Create a list of protocol instances, used for broadcasting
         # to all clients
         self._protocols = []
@@ -177,7 +188,7 @@ class TCPServerFactory(protocol.Factory):
         # TODO: Is this really the best way to implement this?
         eventsource = web_server.eventsource_resource
         backing_track_resource = web_server.backing_track_resource
-        self._shared_context = TCPServerFactory.SharedContext(eventsource)
+        self._shared_context = TCPServerFactory.SharedContext(context)
         self._shared_context.eventsource.add_initialiser(
             self.initialiseParticipants
         )
@@ -207,4 +218,30 @@ class TCPServerFactory(protocol.Factory):
     def broadcast_download_request(self, audio_id, partial_url):
         for protocol in self._protocols:
             protocol.send_download_request(audio_id, partial_url)
+        
+
+class Participants:
+    def __init__(self, context):
+        self._context = context
+        self._db = context["database"]
+        self._eventsource = context["web_server"].eventsource_resource
+        self._data_by_id = {}
+
+        
+    def assign(self, client_id, name):
+        """Assigns name to client_id, overwriting if it exists already."""
+        
+        print(f"Attempting to add '{name}' to the list of participants")
+
+        d = self._db.assign_participant(client_id, name)
+
+
+
+    def get_id(self, name):
+        """Returns the ID of a given name.
+
+        Returns None if the name doesn't exist.
+
+        """
+        return self._db.get_participant_id(name)
         

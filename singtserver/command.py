@@ -6,13 +6,11 @@ log = Logger("command")
 
 
 class Command:
-    def __init__(self,
-                 session_files,
-                 database,
-                 udp_server):
-        self._database = database
-        self._session_files = session_files
-        self._udp_server = udp_server
+    def __init__(self, context):
+        self._context = context
+        self._database = context["database"]
+        self._session_files = context["session_files"]
+        self._udp_server = context["udp_server"]
         self._tcp_server_factory = None
         self._web_server = None
 

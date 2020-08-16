@@ -18,6 +18,9 @@ import command
 from server_web import WebServer
 import session_files
 
+# Create empty context
+context = {}
+
 # Setup logging
 import sys
 from twisted.logger import Logger, LogLevel, LogLevelFilterPredicate, \
@@ -26,6 +29,7 @@ from twisted.logger import Logger, LogLevel, LogLevelFilterPredicate, \
 
 # Create session's required directories
 session_files = session_files.SessionFiles(Path.home())
+context["session_files"] = session_files
 
 logfile = open(session_files.session_dir / "server.log", 'w')
 logtargets = []
@@ -58,29 +62,25 @@ db_filename = session_files.session_dir / "database.sqlite3"
 # Create the database
 database = Database(db_filename)
 session_files.set_database(database)
+context["database"] = database
 
 # Create UDP server
 udp_server = UDPServer()
+context["udp_server"] = udp_server
 
 # Create a Command instance
-command = command.Command(
-    session_files,
-    database,
-    udp_server
-)
+command = command.Command(context)
+context["command"] = command
 
 # Create the web-server based interface
-web_server = WebServer(
-    session_files,
-    database,
-    command
-)
+web_server = WebServer(context)
 command.set_web_server(web_server)
+context["web_server"] = web_server
 
 # Create TCP server factory
-tcp_server_factory = TCPServerFactory(web_server)
+tcp_server_factory = TCPServerFactory(context)
 command.set_tcp_server_factory(tcp_server_factory)
-
+context["tcp_server_factory"] = tcp_server_factory
 
 endpoints.serverFromString(reactor, "tcp:1234").listen(tcp_server_factory)
 reactor.listenUDP(12345, udp_server)
