@@ -242,11 +242,35 @@ class Database:
         """Assigns the name to the client id."""
 
         def execute_sql(cursor):
-            cursor.execute("INSERT INTO Participants (id, participantName) "+
-                           "VALUES (?, ?)",
-                           (client_id, name))
-            participant_id = cursor.lastrowid
-            return participant_id
+            # First, check if the id already exists
+            cursor.execute(
+                "SELECT participantName FROM Participants WHERE id = ?",
+                (client_id,)
+            )
+            row = cursor.fetchone()
+            if row is None:
+                # We don't currently have this ID, insert it
+                cursor.execute(
+                    "INSERT INTO Participants (id, participantName) "+
+                    "VALUES (?, ?)",
+                    (client_id, name)
+                )
+                return client_id
+
+            # Otherwise, a row does already exist
+            current_name = row[0]
+            if name == current_name:
+                # We have nothing to do, the database is already
+                # correct
+                return client_id
+
+            # Otherwise, we need to update the database
+            cursor.execute(
+                "UPDATE Participants SET participantName = ? WHERE id = ?",
+                (name, client_id)
+            )
+            return client_id
+            
 
         d = self.dbpool.runInteraction(execute_sql)
         def on_error(error):

@@ -19,6 +19,7 @@ class TCPServer(protocol.Protocol):
 
         self._shared_context = shared_context
         self.username = None
+        self.client_id = None
 
         self._commands = {}
         self._register_commands()
@@ -86,7 +87,8 @@ class TCPServer(protocol.Protocol):
         try:
             function(json_data)
         except Exception as e:
-            raise Exception(f"Exception during execution of function for command '{command}': "+str(e))
+            log.warn(f"Exception during execution of function for command '{command}': "+str(e))
+            raise
         
     # Data received may be a partial package, or it may be multiple
     # packets joined together.
@@ -100,14 +102,7 @@ class TCPServer(protocol.Protocol):
             
     def connectionLost(self, reason):
         print(f"Connection lost to user '{self.username}':", reason)
-        del self._shared_context.usernames[self.username]
-        data = {
-            "participants": list(self._shared_context.usernames.keys())
-        }
-        self._shared_context.eventsource.publish_to_all(
-            "update_participants",
-            json.dumps(data)
-        )
+        self._shared_context.participants.leave(self.client_id)
 
     def send_message(self, msg):
         msg_as_bytes = msg.encode("utf-8")
@@ -129,40 +124,13 @@ class TCPServer(protocol.Protocol):
         Returns True if username is unused."""
 
         # Extract the username
-        username = json_data["username"]
-        client_id = json_data["client_id"]
+        self.username = json_data["username"]
+        self.client_id = json_data["client_id"]
 
-        self._shared_context.participants.assign(client_id, username)
-        
-        # PREVIOUS TECHNIQUE
-
-        # Check if the username is already registered
-        if username in self._shared_context.usernames:
-            # The username already registered; disconnect client
-            print("Username '{:s}' already in use".format(username))
-            msg = {
-                "error": (
-                    "Username '{:s}' already in use.  ".format(username)+
-                    "Try again with a different username."
-                )
-            }
-            self.transport.write(json.dumps(msg).encode("utf-8"))
-            self.transport.loseConnection()
-            return False
-
-        # Store username and this protocol instance in the shared
-        # context
-        self.username = username
-        print("User '{:s}' has just announced themselves".format(username))
-        self._shared_context.usernames[username] = self
-
-        # Publish an event to update the web interface
-        data = {
-            "participants": list(self._shared_context.usernames.keys())
-        }
-        self._shared_context.eventsource.publish_to_all("update_participants", json.dumps(data))
-        
-        return True
+        self._shared_context.participants.join(
+            self.client_id,
+            self.username
+        )
 
     def _command_update_downloaded(self, json_data):
         print("In _command_update_downloaded, with json_data: ", json_data)
@@ -173,8 +141,6 @@ class TCPServerFactory(protocol.Factory):
     class SharedContext:
         def __init__(self, context):
             self.eventsource = context["web_server"].eventsource_resource
-            self.usernames = {}
-            
             self.participants = Participants(context)
             
     def __init__(self, context):
@@ -189,9 +155,6 @@ class TCPServerFactory(protocol.Factory):
         eventsource = web_server.eventsource_resource
         backing_track_resource = web_server.backing_track_resource
         self._shared_context = TCPServerFactory.SharedContext(context)
-        # self._shared_context.eventsource.add_initialiser(
-        #     self.initialiseParticipants
-        # )
         self._shared_context.eventsource.add_initialiser(
             backing_track_resource.initialise_eventsource
         )
@@ -204,17 +167,6 @@ class TCPServerFactory(protocol.Factory):
     def startFactory(self):
         print("Server started")
 
-    def initialiseParticipants(self):
-        data = {
-            "participants": list(self._shared_context.usernames.keys())
-        }
-
-        json_data = json.dumps(data)
-
-        d = defer.Deferred()
-        d.callback(("update_participants", json_data))
-        return d
-
     def broadcast_download_request(self, audio_id, partial_url):
         for protocol in self._protocols:
             protocol.send_download_request(audio_id, partial_url)
@@ -225,30 +177,53 @@ class Participants:
         self._context = context
         self._db = context["database"]
         self._eventsource = context["web_server"].eventsource_resource
-        self._data_by_id = {}
+        self._connected_participants = {}
 
         self._eventsource.add_initialiser(self.eventsource_initialiser)
 
-        
-    def assign(self, client_id, name):
-        """Assigns name to client_id, overwriting if it exists already."""
-        
-        print(f"Attempting to add '{name}' to the list of participants")
 
+    def join(self, client_id, name):
+        """Assigns name to client_id, overwriting if it exists already.
+
+        Broadcasts new client on eventsource.
+
+        """
         d = self._db.assign_participant(client_id, name)
 
+        def on_success(client_id):
+            self._connected_participants[client_id] = name
+            self.eventsource_broadcast()
+        d.addCallback(on_success)
+        return d
 
+    
+    def leave(self, client_id):
+        print(self._connected_participants)
+        del self._connected_participants[client_id]
+        self.eventsource_broadcast()
+
+    
     def get_list(self):
-        """Returns list of participants."""
-        return self._db.get_participants()
+        """Returns list of currently connected participants."""
+        connected_list = [
+            {"id":id_, "name":name}
+            for id_, name in self._connected_participants.items()
+        ]
+        return json.dumps(connected_list)
         
 
     def eventsource_initialiser(self):
-        d = self.get_list()
-        def on_success(participants):
-            event = "update_participants"
-            participants_json = json.dumps(participants)
-            return (event, participants_json)
-        d.addCallback(on_success)
-
+        d = defer.Deferred()
+        d.callback(
+            ("update_participants",
+             self.get_list())
+        )
         return d
+
+    
+    def eventsource_broadcast(self):
+        connected_list = self.get_list()
+        self._eventsource.publish_to_all(
+            "update_participants",
+            connected_list
+        )
