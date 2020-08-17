@@ -35,17 +35,10 @@
               <a class="nav-link" href="#page_tracks">Tracks</a>
             </li>
             <li class="nav-item">
-              <a class="nav-link" href="#page_recording">
-                Recording
+              <a class="nav-link" href="#page_takes">Play and Record
                 <span class="d-none badge badge-pill badge-danger pulse">&nbsp;</span>
                 <span id="nav_participants" class="d-none badge badge-light">3</span> <!-- number of users -->
               </a>
-            </li>
-            <li class="nav-item">
-              <a class="nav-link" href="#page_playback">Playback</a>
-            </li>
-            <li class="nav-item">
-              <a class="nav-link" href="#page_settings">Settings</a>
             </li>
           </ul>
         </div>
@@ -122,78 +115,14 @@
         </div> <!-- /card -->
       </div>
 
-      <!-- Recording -->
-      <div id="page_recording" class="page">
+
+      <!-- Play and Record -->
+      <div id="page_takes" class="page">
         <div class="card">
           <div class="card-header">
             <h2>
               <img src="./icons/music-note-list.svg" alt="" width="32" height="32" class="mr-2">
-              Recording
-            </h2>
-          </div>
-          <div class="card-body">
-            <p class="mb-3">
-              To start a recording, select either a backing track, or
-              a previous take, or one of each, then press the "Record"
-              button.
-            </p>
-            <div class="row">
-              <div class="col">
-                <h3>Record a Take</h3>
-
-                <form id="form_recording">
-                  <div class="form-group row">
-                    <label class="col-sm-2 col-form-label">Tracks</label>
-                    <div class="col-sm-10">
-                      <select class="form-control" id="recording_select_tracks">
-                      </select>
-                    </div>
-                  </div>
-                  
-                  <div class="form-group row">
-                    <label class="col-sm-2 col-form-label">Takes</label>
-                    <div class="col-sm-10">
-                      <select class="form-control">
-	    <option>Choose one</option>
-	    <option value="1234-0">Original track</option>
-	    <option value="1234-1">Take 1</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <hr> 
-                  <button class="btn btn-primary">Record Take</button>
-
-
-
-              </div>
-              <div class="col col-lg-4">
-                <h3>Participants</h3>
-
-
-                <ul class="d-none list-group" id="participants">
-                </ul>
-                <div id="no_participants" class="d-none alert alert-info" role="alert">
-                  <h4 class="alert-heading">Uh oh</h4>
-                  <p>
-	<img src="./icons/person-badge.svg" alt="" width="32" height="32" title="Person" class="mr-2"> No one has connected yet.
-                  </p>
-                  <hr class='thin'>
-                  <p class="mb-0 text-sm text-muted">If a tree falls in the forest without a conductor... </p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Playback -->
-      <div id="page_playback" class="page">
-        <div class="card">
-          <div class="card-header">
-            <h2>
-              <img src="./icons/music-player-fill.svg" alt="" width="32" height="32" class="mr-2">
-              Playback
+              Play and Record
             </h2>
           </div>
           <div class="card-body">
@@ -205,33 +134,133 @@
             </p>
 
             <p>
-              To play back audio, select a backing track, a take, or
-              one of each, and press the "Play for Everyone" button.
+              To play back audio, select your desired combination of
+              backing tracks and takes and press the "Play for
+              Everyone" button.
             </p>
 
-            <form id="form_playback">
-              <div class="form-group row">
-                <label class="col-sm-2 col-form-label">Tracks</label>
-                <div class="col-sm-10">
-                  <select class="form-control" id="playback_select_tracks">
-                  </select>
-                </div>
-              </div>
-              
-              <div class="form-group row">
-                <label class="col-sm-2 col-form-label">Takes</label>
-                <div class="col-sm-10">
-                  <select class="form-control">
-	<option>Choose one</option>
-	<option value="1234-0">Original track</option>
-	<option value="1234-1">Take 1</option>
-                  </select>
-                </div>
-              </div>
+            <p>
+              To record a new take, select your desired combination of
+              tracks and takes and enter the name of the new take.
+              Press the "Prepare for Recording" button, which will
+              organise the transfer of the required files.  When the
+              participants are all ready, press the "Record" button.
+            </p>
 
-              <hr> 
-              <button class="btn btn-primary">Play for Everyone</button>
-            </form>
+            <div class="row">
+              <div class="col">
+                <form id="form_playback">
+                    
+                  <div class="form-group row">
+                    <label class="col-sm-2 col-form-label">Track</label>
+                    <div class="col-sm-10">
+                      <select class="form-control" id="playback_select_tracks">
+                      </select>
+                    </div>
+                  </div>
+                  
+                  <div class="form-group row">
+                    <label class="col-sm-2 col-form-label">Combination</label>
+                    <div class="col-sm-10">
+                      <div class="btn-group btn-group-toggle" data-toggle="buttons">
+                        <label class="btn btn-secondary active">
+                          <input type="radio" name="options" id="playback_combo_track_only" autocomplete="off" checked>
+                          Track Only
+                        </label>
+                        <label class="btn btn-secondary">
+                          <input type="radio" name="options" id="playback_combo_mix" autocomplete="off">
+                          Mix Track and Takes
+                        </label>
+                        <label class="btn btn-secondary">
+                          <input type="radio" name="options" id="playback_combo_takes_only" autocomplete="off">
+                          Takes Only
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div class="form-group row">
+                    <label class="col-sm-2 col-form-label" for="playback_multiselect_takes">
+                      Takes
+                    </label>
+                    <div class="col-sm-10">
+                      <select multiple class="form-control" id="playback_multiselect_takes">
+                        <option value="1">Take 1</option>
+                        <option>Take 2</option>
+                        <option>Take 3</option>
+                        <option>Take 4</option>
+                        <option>Take 5</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  
+                  <hr>
+
+                  <div class="form-group row">
+                    <label class="col-sm-2 col-form-label">
+                      Playback
+                    </label>
+                    <div class="col-sm-10">
+                      <button class="btn btn-primary" id="playback_button_play">
+                        Play for Everyone
+                      </button>
+                      <button class="btn btn-secondary" id="playback_button_stop">
+                        Stop for Everyone
+                      </button>
+                    </div>
+                  </div>
+
+                  <hr>
+
+                  <div class="form-group row">
+                    <label class="col-sm-2 col-form-label" for="take_name">
+                      Take Name
+                    </label>
+                    <div class="col-sm-10">
+	                   <input id="take_name" type="text" class="form-control" required>
+                    </div>
+                  </div>
+                  
+                  
+                  <div class="form-group row">
+                    <label class="col-sm-2 col-form-label">
+                      Recording
+                    </label>
+                    <div class="col-sm-10">
+                      <button class="btn btn-primary" id="recording_button_prepare">
+                        Prepare for Recording
+                      </button>
+                      <button class="btn btn-danger" id="recording_button_record">
+                        Record
+                      </button>
+                    </div>
+                  </div>
+                  
+                </form>
+              </div> <!-- /col -->
+
+
+              <div class="col col-lg-4">
+                <h3>Participants</h3>
+                <ul class="d-none list-group" id="participants">
+                </ul>
+                <div id="no_participants" class="d-none alert alert-info" role="alert">
+                  <h4 class="alert-heading">Uh oh</h4>
+                  <p>
+	                 <img src="./icons/person-badge.svg" alt="" width="32" height="32"
+                         title="Person" class="mr-2">
+                    No one has connected yet.
+                  </p>
+                  <hr class='thin'>
+                  <p class="mb-0 text-sm text-muted">If a tree falls in the forest without a conductor... </p>
+                </div>
+              </div> <!-- /col -->
+
+              
+            </div> <!-- /row -->
+
+            
           </div>
         </div>
       </div>

@@ -20,12 +20,9 @@ log = Logger("backing_track")
 class BackingTrack(resource.Resource):
     isLeaf = True
 
-    def __init__(self, uploads_dir, backing_track_dir, database, eventsource):
+    def __init__(self, session_files, database, eventsource):
         super()
-
-        # Assume that directories already exist
-        self._uploads_dir = uploads_dir
-        self._backing_track_dir = backing_track_dir
+        self._session_files = session_files
         self._db = database
         self._eventsource = eventsource
 
@@ -44,7 +41,7 @@ class BackingTrack(resource.Resource):
         def make_random_filename(ext):
             return str(random.randint(0, 1e8))+ext
 
-        user_filename = self._uploads_dir / make_random_filename(".user_upload")
+        user_filename = self._session_files.uploads_dir / make_random_filename(".user_upload")
         user_file = open(user_filename, "wb")
         user_file.write(file_contents)
 
@@ -65,7 +62,7 @@ class BackingTrack(resource.Resource):
             # and we don't want to do that until we've verified that
             # the conversion process worked correctly.
             try:
-                output_filename = self._uploads_dir / make_random_filename(".opus") 
+                output_filename = self._session_files.uploads_dir / make_random_filename(".opus") 
                 output_file = open(output_filename, "wb")
                 convert_wav_to_opus(user_file, output_file)
                 user_file.close()
@@ -116,20 +113,22 @@ class BackingTrack(resource.Resource):
             # been used.
             def write_to_database(cursor):
                 print("Inserting '{:s}' into backing tracks".format(name))
-                cursor.execute("INSERT INTO BackingTracks(trackName) VALUES (?);", (name,))
+                # Turn on foreign key constraints
+                cursor.execute("PRAGMA foreign_keys = ON;")
+                cursor.execute("INSERT INTO AudioIdentifiers DEFAULT VALUES")
+                audio_id = cursor.lastrowid
+                cursor.execute("INSERT INTO BackingTracks(audioId, trackName) VALUES (?,?);", (audio_id, name))
                 backing_track_id = cursor.lastrowid
                 return backing_track_id
             return self._db.dbpool.runInteraction(write_to_database)
             
         def on_success(backing_track_id):
-            print("in on_success, rowid:", backing_track_id)
-
             # Rename file
-            desired_filename = self._backing_track_dir / (str(backing_track_id)+".opus")
-            log.info("Saving uploaded file as '{:s}'".format(str(desired_filename)))
+            desired_path = self._session_files.get_track_path(backing_track_id)
+            log.info("Saving uploaded file as '{:s}'".format(str(desired_path)))
 
             output_path = Path(output_file.name)
-            output_path.rename(desired_filename)
+            output_path.rename(desired_path)
 
             # Close the file
             output_file.close()
@@ -193,9 +192,12 @@ class BackingTrack(resource.Resource):
     def _get_backing_track_json(self):
         # Get list of backing tracks from database
         def execute_sql(cursor):
-            cursor.execute("SELECT * FROM BackingTracks")
-            results = json.dumps(cursor.fetchall())
-            return results
+            cursor.execute("SELECT id, trackName FROM BackingTracks")
+            rows = cursor.fetchall()
+            results = [{"id":row[0], "track_name":row[1]} for row in rows]
+            results_json = json.dumps(results)
+            print("backing track json:", results_json)
+            return results_json
             
         d = self._db.dbpool.runInteraction(execute_sql)
 

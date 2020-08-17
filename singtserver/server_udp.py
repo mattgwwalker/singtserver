@@ -22,7 +22,8 @@ log = Logger("backing_track")
 
 class UDPServer(DatagramProtocol):
     def __init__(self):
-        
+        self._stream = None
+        self._stream_buffer = None
         # TEST
         self._dropped_packets = 0
 
@@ -51,59 +52,27 @@ class UDPServer(DatagramProtocol):
 
         jitter_buffer.put_packet(seq_no, encoded_packet)
 
-        return
 
+    def play_audio(self, filenames):
+        # Assumes filename points to Opus-encoded audio.
+        # TODO: Check that we're not currently playing anything else
 
-        # !!!!!!!!!!! FIXME !!!!!!!!!!!
-        # Doesn't use the jitter buffer's packet
-
-        # Fake high data loss
-        reliability = 1.0
-        if random.random() < reliability: 
-            self.transport.write(data, addr)
-        else:
-            self._dropped_packets += 1
-            print(f"TEST: DROPPING PACKET! Dropped a total of {self._dropped_packets} packets.")
-            
-        return
-
-
-        seq_no = int.from_bytes(seq_no ,"big")
-        print("\n",seq_no)
-
-        # Get OpusDecoder for this client
+        # TODO: Deal with more than one filename
+        log.info("Playing these filenames: "+str(filenames))
+        filename = filenames[0]
+        
+        # Open file as stream
         try:
-            opus_decoder = self._opus_decoders[addr]
-        except KeyError:
-            # Didn't find an OpusDecoder for this connection, create
-            # one and store it in the dictionary
-            opus_decoder = pyogg.OpusDecoder()
-            self._opus_decoders[addr] = opus_decoder
+            self._stream = pyogg.OpusFileStream(str(filename))
+        except Exception as e:
+            raise Exception(f"Failed to open OpusFileStream (with filename '{filename}': "+
+                            str(e))
+        self._stream_buffer = None
 
-            # Initialise the decoder
-            opus_decoder.set_channels(1) # Mono
-            opus_decoder.set_sampling_frequency(48000)
-
-        # Decode the encoded packet
-        pcm = opus_decoder.decode(encoded_packet)
-
-        # Get the wave_write for this client
-        try:
-            wave_write = self._wave_writes[addr]
-        except KeyError:
-            # Didn't find a wave_write for this connection, create one
-            # and store it in the dictionary
-            filename = f"{addr[0]}_{addr[1]}.wav"
-            wave_write = wave.open(filename, "wb")
-            self._wave_writes[addr] = wave_write
-
-            # Initialise the wave_write
-            wave_write.setnchannels(1)
-            wave_write.setsampwidth(2)
-            wave_write.setframerate(48000)
-
-        # Write the PCM to the wav file
-        wave_write.writeframes(pcm)
+    def stop_audio(self):
+        # TODO: It would be much nicer if this faded out
+        self._stream = None
+        self._stream_buffer = None
 
 
     def process_audio_frame(self, count):
@@ -157,14 +126,14 @@ class UDPServer(DatagramProtocol):
                     pcm_float = numpy.reshape(pcm_float, (len(pcm_float), 1))
                     pcm = pcm_float
 
-                    # Apply automatic gain control to the PCM
-                    try:
-                        agc = connection["automatic_gain_control"]
-                    except KeyError:
-                        agc = AutomaticGainControl()
-                        connection["automatic_gain_control"] = agc
-                    agc.apply(pcm)
-                    print("gain:", agc.gain)
+                    # # Apply automatic gain control to the PCM
+                    # try:
+                    #     agc = connection["automatic_gain_control"]
+                    # except KeyError:
+                    #     agc = AutomaticGainControl()
+                    #     connection["automatic_gain_control"] = agc
+                    # agc.apply(pcm)
+                    # print("gain:", agc.gain)
                     
                 # Store the PCM
                 pcms[address] = pcm
@@ -187,6 +156,66 @@ class UDPServer(DatagramProtocol):
                 else:
                     combined_pcm += pcm
 
+            # Mix in playback audio
+            if (self._stream is not None
+                or self._stream_buffer is not None):
+                # Read the next part of the stream until either we
+                # come to the end or we've got sufficient for a full
+                # frame.
+                samples_per_second = 48000 # FIXME
+                duration_ms = 20 # FIXME
+                samples_per_frame = samples_per_second // 1000 * duration_ms # FIXME
+                while (self._stream_buffer is None
+                       or len(self._stream_buffer) < samples_per_frame):
+                    next_ = self._stream.get_buffer_as_array()
+                    if next_ is None:
+                        # We've come to the end
+                        self._stream = None
+                        break
+                    # Join what we just read to what we've read so far
+                    if self._stream_buffer is None:
+                        self._stream_buffer = numpy.copy(next_)
+                    else:
+                        self._stream_buffer = numpy.concatenate(
+                            (self._stream_buffer, next_)
+                        )
+
+                # Obtain the PCM
+                if len(self._stream_buffer) >= samples_per_frame:
+                    # Take what we need to fill a frame and leave the rest
+                    pcm = self._stream_buffer[:samples_per_frame]
+                    self._stream_buffer = self._stream_buffer[samples_per_frame:]
+                else:
+                    # Take whatever's left
+                    pcm = self._stream_buffer
+                    self._stream_buffer = None
+
+                # Convert the int16 data to float
+                pcm_float = pcm.astype(numpy.float32)
+                pcm_float /= 2**15
+
+                # Convert it to mono if it's in stereo
+                pcm_float = numpy.mean(pcm_float, axis=1)
+                pcm_float = pcm_float.reshape((len(pcm_float),1))
+
+                # Fill with zeros if it's not long enough
+                if len(pcm_float) < samples_per_frame:
+                    pcm_float = numpy.concatenate(
+                        (pcm_float, numpy.zeros(
+                            (samples_per_frame - len(pcm_float), 1)
+                        ))
+                    )
+
+                # Halve the volume
+                pcm_float /= 2
+
+                # Add it into the combined pcm
+                if combined_pcm is None:
+                    combined_pcm = pcm_float
+                else:
+                    combined_pcm += pcm_float
+                    
+
             # Prepare each individual client's PCM
             if combined_pcm is not None:
                 # Send the encoded packet to all the clients
@@ -196,7 +225,7 @@ class UDPServer(DatagramProtocol):
                         continue
                     
                     # Remove their signal from the audio
-                    client_pcm = combined_pcm - client_signal
+                    client_pcm = combined_pcm #- client_signal
 
                     # Convert from float32 to int16
                     pcm_int16 = client_pcm * (2**15-1)

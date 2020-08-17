@@ -8,6 +8,7 @@ SINGT.wireup = function(){
     SINGT.wireup.eventsource();
     SINGT.wireup.forms();
     SINGT.wireup.page_tracks();
+    SINGT.wireup.page_playback();
 }
 
 SINGT.wireup.nav = function() {
@@ -44,6 +45,161 @@ SINGT.wireup.page_tracks = function(){
     });
 };
 
+SINGT.wireup.page_playback = function(){
+    $("#playback_button_play").click(function() {
+        console.log("Playback button clicked");
+
+        // Get state of combo selection
+        var combo_selection = undefined
+        if ($("#playback_combo_track_only").is(":checked")) {
+            combo_selection = "track_only";
+        } else if ($("#playback_combo_mix").is(":checked")) {
+            combo_selection = "mix";
+        } else if ($("#playback_combo_takes_only").is(":checked")) {
+            combo_selection = "takes_only";
+        }
+        console.log("combo_selection:", combo_selection);
+
+        // Get selected track
+        track = $("#playback_select_tracks").val();
+        console.log("track:", track);
+
+        // Get selected takes
+        takes = $("#playback_multiselect_takes").val()
+        console.log("takes:", takes);
+
+        // Form command
+        command = {
+            "command": "play_for_everyone"
+        }
+        if (combo_selection=="track_only" ||
+            combo_selection=="mix") {
+            command["track_id"] = track;
+        }
+        if (combo_selection=="mix" ||
+            combo_selection=="takes_only") {
+            command["take_ids"] = takes;
+        }
+        json_command = JSON.stringify(command);
+        
+        // Send command
+        console.log("command:", command);
+        $.ajax({
+            type: 'POST',
+            url: 'command',
+            data: json_command,
+            dataType: "json",
+            contentType: "application/json",
+            success: function(msg) {
+                console.log(msg);
+            },
+            error: function(jqXHR, st, error) {
+                // Hopefully we should never reach here
+                alert("FAILED to send command 'play_for_everyone'");
+            }
+        });
+
+        return false; // Do not reload page
+    });
+
+    $("#playback_button_stop").click(function() {
+        console.log("Stop button clicked");
+
+        // Form command
+        command = {
+            "command": "stop_for_everyone"
+        }
+        json_command = JSON.stringify(command);
+        
+        // Send command
+        console.log("command:", command);
+        $.ajax({
+            type: 'POST',
+            url: 'command',
+            data: json_command,
+            dataType: "json",
+            contentType: "application/json",
+            success: function(msg) {
+                console.log(msg);
+            },
+            error: function(jqXHR, st, error) {
+                // Hopefully we should never reach here
+                alert("FAILED to send command 'stop_for_everyone'");
+            }
+        });
+
+        return false; // Do not reload page
+    });
+
+    $("#recording_button_prepare").click(function() {
+        console.log("'Prepare for Recording' button clicked");
+
+        // Get state of combo selection
+        var combo_selection = undefined
+        if ($("#playback_combo_track_only").is(":checked")) {
+            combo_selection = "track_only";
+        } else if ($("#playback_combo_mix").is(":checked")) {
+            combo_selection = "mix";
+        } else if ($("#playback_combo_takes_only").is(":checked")) {
+            combo_selection = "takes_only";
+        }
+        console.log("combo_selection:", combo_selection);
+
+        // Get selected track
+        track = $("#playback_select_tracks").val();
+        console.log("track:", track);
+
+        // Get selected takes
+        takes = $("#playback_multiselect_takes").val()
+        console.log("takes:", takes);
+
+        // Get participants
+        participants =
+            $("#participants")
+            .find("input")
+            .map(function(i, v) {
+                if ($(v).prop("checked")) {
+                    return $(v).val();
+                }
+            })
+            .get(); // get the array
+
+        // Form command
+        command = {
+            "command": "prepare_for_recording",
+            "participants": participants
+        }
+        if (combo_selection=="track_only" ||
+            combo_selection=="mix") {
+            command["track_id"] = track;
+        }
+        if (combo_selection=="mix" ||
+            combo_selection=="takes_only") {
+            command["take_ids"] = takes;
+        }
+        json_command = JSON.stringify(command);
+        
+        // Send command
+        console.log("command:", command);
+        $.ajax({
+            type: 'POST',
+            url: 'command',
+            data: json_command,
+            dataType: "json",
+            contentType: "application/json",
+            success: function(msg) {
+                console.log(msg);
+            },
+            error: function(jqXHR, st, error) {
+                // Hopefully we should never reach here
+                alert("FAILED to send command 'prepare_for_recording'");
+            }
+        });
+        return false; // Do not reload page
+    });
+
+};
+
 SINGT.wireup.forms = function() {
     // Connect backing track upload button
     $("#backing_track_upload").click(SINGT.backing_tracks.upload);
@@ -61,34 +217,28 @@ SINGT.wireup.forms = function() {
 SINGT.participants = {};
 SINGT.participants.update = function() {
     console.log(event);
-    let parsed_data = JSON.parse(event.data);
-    console.log(parsed_data);
-
-    if ("participants" in parsed_data) {
-        participants = parsed_data["participants"];
+    let participants = JSON.parse(event.data);
+    console.log(participants);
         
-        $('#participants').addClass('d-none');
-        $('#no_participants').addClass('d-none');
-        $('#nav-participants').addClass('d-none');
+    $('#participants').addClass('d-none');
+    $('#no_participants').addClass('d-none');
+    $('#nav-participants').addClass('d-none');
         
 
-        // If there aren't any participants, state that
-        if (participants.length == 0) {
-            $('#no_participants').removeClass('d-none');
-        } else {	
-            // Otherwise, form an unordered list with the names of the
-            // participants
-            let participantsHtml = '';
-            for (participant of participants) {
-                participantsHtml += '<li class="list-group-item"><img src="./icons/person-badge.svg" alt="" width="32" height="32" title="Person" class="mr-2">' + participant + '</li>';
-            }
-            $("#participants").html(participantsHtml).removeClass('d-none');
-            $('#nav-participants').text(participants.length).removeClass('d-none');
+    // If there aren't any participants, state that
+    if (participants.length == 0) {
+        $('#no_participants').removeClass('d-none');
+    } else {	
+        // Otherwise, form an unordered list with the names of the
+        // participants
+        let participantsHtml = '';
+        for (participant of participants) {
+            console.log(participant.name)
+            participantsHtml += '<li class="list-group-item"><img src="./icons/person-badge.svg" alt="" width="32" height="32" title="Person" class="mr-2">' + participant.name + '<div class="form-check float-right"><input class="form-check-input position-static" type="checkbox" checked="checked" id="blankCheckbox" value="'+participant.id+'" aria-label="Include '+participant.name+'"></div></li>';
         }
-    } else {
-        console.error('Dude, wheres my car?');
+        $("#participants").html(participantsHtml).removeClass('d-none');
+        $('#nav-participants').text(participants.length).removeClass('d-none');
     }
-    
 };
 
 SINGT.backing_tracks = {};
@@ -158,13 +308,14 @@ SINGT.backing_tracks.update = function() {
     $('#zero_tracks').addClass('d-none');
     $('#backing_tracks').removeClass('d-none');
     let tracksHtml = '';
-    let optionsHtml = '<option>Choose one</option>';
+    let optionsHtml = '';
 
     // Go through each of the entries and add in a row to the tracks
     // pages, the recording page, and the playback page
     for (track_entry of parsed_data) {
-        track_id = track_entry[0]
-        track_name = track_entry[1]
+        console.log("track_entry:", track_entry);
+        track_id = track_entry["id"]
+        track_name = track_entry["track_name"]
         
         tracksHtml += '<li class="list-group-item"><img src="./icons/file-music.svg" alt="" width="32" height="32" title="Track" class="mr-2">' + track_name + '</li>';
 

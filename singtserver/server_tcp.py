@@ -5,62 +5,35 @@ from twisted.internet import defer
 from twisted.internet import protocol
 from twisted.logger import Logger
 
+from singtcommon import TCPPacketizer
+
 # Start a logger with a namespace for a particular subsystem of our application.
 log = Logger("server_tcp")
 
 
 # An instance of this class is created for each client connection.
 class TCPServer(protocol.Protocol):
-    class State:
-        STARTING = 10
-        CONTINUING = 20
-    
     def __init__(self, shared_context):
         super()
-        self._buffer = b""
-        self._state = TCPServer.State.STARTING
-        self._length = None
+        self._tcp_packetizer = None
 
         self._shared_context = shared_context
         self.username = None
+        self.client_id = None
 
-
-    def announce(self, json_data):
-        """Announces username, which is then stored in the shared context.
-        Returns True if username is unused."""
-
-        # Extract the username
-        username = json_data["username"]
-
-        # Check if the username is already registered
-        if username in self._shared_context.usernames:
-            # The username already registered; disconnect client
-            print("Username '{:s}' already in use".format(username))
-            msg = {
-                "error": (
-                    "Username '{:s}' already in use.  ".format(username)+
-                    "Try again with a different username."
-                )
-            }
-            self.transport.write(json.dumps(msg).encode("utf-8"))
-            self.transport.loseConnection()
-            return False
-
-        # Store username and this protocol instance in the shared
-        # context
-        self.username = username
-        print("User '{:s}' has just announced themselves".format(username))
-        self._shared_context.usernames[username] = self
-
-        # Publish an event to update the web interface
-        data = {
-            "participants": list(self._shared_context.usernames.keys())
-        }
-        self._shared_context.eventsource.publish_to_all("update_participants", json.dumps(data))
+        self._commands = {}
+        self._register_commands()
         
-        return True
+    def _register_commands(self):
+        self.register_command("announce", self._command_announce)
+        self.register_command("update_downloaded", self._command_update_downloaded)
 
-
+    def register_command(self, command, function):
+        self._commands[command] = function
+        
+    def connectionMade(self):
+        self._tcp_packetizer = TCPPacketizer(self.transport)
+        
     def send_file(self, filename):
         f = open(filename, "rb")
 
@@ -96,112 +69,254 @@ class TCPServer(protocol.Protocol):
         try:
             json_data = json.loads(msg)
         except Exception as e:
-            print("Failed to parse message as JSON.")
-            print("msg:", msg)
-            print("Exception:",e)
-            return
+            raise Exception(f"Failed to parse message ({msg}) as JSON: "+str(e))
 
-        # Execute commands
+        # Get command
         try:
             command = json_data["command"]
         except KeyError:
-            print("Failed to find 'command' key in JSON")
-            print("msg:", msg)
-            return
-        
-        if command=="announce":
-            self.announce(json_data)
-        else:
-            print("Unknown command ({:s})".format(command))
-            print("msg:", msg)
-            return
+            raise Exception(f"Failed to find 'command' key in message ({msg})")
 
+        # Get function
+        try:
+            function = self._commands[command]
+        except KeyError:
+            raise Exception(f"No function was registered against the command '{command}'")
+
+        # Execute function
+        try:
+            function(json_data)
+        except Exception as e:
+            log.warn(f"Exception during execution of function for command '{command}': "+str(e))
+            raise
         
     # Data received may be a partial package, or it may be multiple
     # packets joined together.
     def dataReceived(self, data):
-        print("Received data:", data)
+        packets = self._tcp_packetizer.decode(data)
 
-        # Combine current data with buffer
-        data = self._buffer + data
+        for packet in packets:
+            print("packet decoded:", packet)
+            self.process(packet)
 
-        while len(data) > 0:
-            #print("Considering data:", data)
             
-            if self._state == TCPServer.State.STARTING:
-                # Read the first two bytes as a short integer
-                self._length = struct.unpack("H",data[0:2])[0]
-                #print("length:",self._length)
-
-                # Remove the short from the data
-                data = data[2:]
-
-                # Move to CONTINUING
-                self._state = TCPServer.State.CONTINUING
-
-            if self._state == TCPServer.State.CONTINUING:
-                # Do we have all the required characters in the current data?
-                if len(data) >= self._length:
-                    # Separate the current message
-                    msg = data[:self._length]
-
-                    # Process the message
-                    self.process(msg.decode("utf-8"))
-
-                    # Remove the current message from any remaining data
-                    data = data[self._length:]
-
-                    # Move back to STARTING
-                    self._state = TCPServer.State.STARTING
-                else:
-                    # We do not have sufficient characters.  Store them in
-                    # the buffer till next time we receive data.
-                    #print("We do not have sufficient characters; waiting")
-                    #print("len(data):", len(data))
-                    self._buffer = data
-                    data = ""
-
     def connectionLost(self, reason):
         print(f"Connection lost to user '{self.username}':", reason)
-        del self._shared_context.usernames[self.username]
-        data = {
-            "participants": list(self._shared_context.usernames.keys())
-        }
-        self._shared_context.eventsource.publish_to_all(
-            "update_participants",
-            json.dumps(data)
-        )
-            
+        self._shared_context.participants.leave(self.client_id)
 
+    def send_message(self, msg):
+        msg_as_bytes = msg.encode("utf-8")
+        len_as_short = struct.pack("H", len(msg))
+        encoded_msg = len_as_short + msg_as_bytes
+        self.transport.write(encoded_msg)
+
+    def send_download_request(self, audio_id, partial_url):
+        command = {
+            "command": "download",
+            "audio_id": audio_id,
+            "partial_url": str(partial_url)
+        }
+        command_json = json.dumps(command)
+        self.send_message(command_json)
+
+    def _command_announce(self, json_data):
+        """Announces username, which is then stored in the shared context.
+        Returns True if username is unused."""
+
+        # Extract the username
+        print("json_data:",json_data)
+        self.username = json_data["username"]
+        self.client_id = int(json_data["client_id"])
+
+        self._shared_context.participants.join(
+            self.client_id,
+            self.username
+        )
+
+    def _command_update_downloaded(self, json_data):
+        print("In _command_update_downloaded, with json_data: ", json_data)
+        client_id = self.client_id
+        audio_id = json_data["audio_id"]
+        result = json_data["result"]
+
+        # Get the deferred that's waiting on this update
+        d = self._shared_context._download_results_collector.get_deferred(
+            client_id,
+            audio_id
+        )
+
+        # Call the appropriate callback
+        if result=="success":
+            print("Calling success callback")
+            d.callback((client_id, audio_id))
+        else:
+            print("Calling error callback")
+            d.errback((client_id, audio_id, json_data["error"]))
+
+        # Remove the deferred from the collector
+        self._shared_context._download_results_collector.remove_deferred(
+            client_id,
+            audio_id
+        )
+
+        return d
+            
  
 class TCPServerFactory(protocol.Factory):
     class SharedContext:
-        def __init__(self, eventsource):
-            self.eventsource = eventsource
-            self.usernames = {}
+        def __init__(self, context):
+            self.eventsource = context["web_server"].eventsource_resource
+            self.participants = Participants(context)
+            self._download_results_collector = DownloadResultsCollector()
             
-    def __init__(self, eventsource, backing_track_resource):
-        self._shared_context = TCPServerFactory.SharedContext(eventsource)
-        self._shared_context.eventsource.add_initialiser(
-            self.initialiseParticipants
-        )
+    def __init__(self, context):
+        self._context = context
+        web_server = self._context["web_server"]
+        
+        # Create a list of protocol instances, used for broadcasting
+        # to all clients
+        self._protocols = []
+
+        # TODO: Is this really the best way to implement this?
+        eventsource = web_server.eventsource_resource
+        backing_track_resource = web_server.backing_track_resource
+        self._shared_context = TCPServerFactory.SharedContext(context)
         self._shared_context.eventsource.add_initialiser(
             backing_track_resource.initialise_eventsource
         )
     
     def buildProtocol(self, addr):
-        return TCPServer(self._shared_context)
+        protocol = TCPServer(self._shared_context)
+        self._protocols.append(protocol)
+        return protocol
 
     def startFactory(self):
         print("Server started")
 
-    def initialiseParticipants(self):
-        data = {
-            "participants": list(self._shared_context.usernames.keys())
-        }
-
-        json_data = json.dumps(data)
-
-        d = defer.Deferred()
-        d.callback(("update_participants", json_data))
+    def broadcast_download_request(self, audio_id, partial_url, participants):
+        print("audio_id:", audio_id)
+        deferreds = []
+        for protocol in self._protocols:
+            if protocol.client_id in participants:
+                protocol.send_download_request(audio_id, partial_url)
+                d = self._shared_context._download_results_collector.make_deferred(protocol.client_id, audio_id)
+                def on_success(data):
+                    print("SUCCESS (in broadcast_download_request)")
+                    return data
+                d.addCallback(on_success)
+                deferreds.append(d)
+                
+        d = defer.gatherResults(deferreds)
+        def on_success(data):
+            print("SUCCESS on all deferreds (in broadcast_download_request)")
+        d.addCallback(on_success)
+            
         return d
+        
+
+class Participants:
+    def __init__(self, context):
+        self._context = context
+        self._db = context["database"]
+        self._eventsource = context["web_server"].eventsource_resource
+        self._connected_participants = {}
+
+        self._eventsource.add_initialiser(self.eventsource_initialiser)
+
+
+    def join(self, client_id, name):
+        """Assigns name to client_id, overwriting if it exists already.
+
+        Broadcasts new client on eventsource.
+
+        """
+        d = self._db.assign_participant(client_id, name)
+
+        def on_success(client_id):
+            self._connected_participants[client_id] = name
+            self.eventsource_broadcast()
+        d.addCallback(on_success)
+        return d
+
+    
+    def leave(self, client_id):
+        print(self._connected_participants)
+        try:
+            del self._connected_participants[client_id]
+            self.eventsource_broadcast()
+        except KeyError:
+            log.warn(f"Failed to find participant with client id {client_id}; could not remove from participants list")
+
+    
+    def get_list(self):
+        """Returns list of currently connected participants.
+
+        Converts the client id to a string, as Javascript's unable to
+        handle ints larger than 53-bits.
+
+        """
+        connected_list = [
+            {"id":str(id_), "name":name}
+            for id_, name in self._connected_participants.items()
+        ]
+        return json.dumps(connected_list)
+        
+
+    def eventsource_initialiser(self):
+        d = defer.Deferred()
+        d.callback(
+            ("update_participants",
+             self.get_list())
+        )
+        return d
+
+    
+    def eventsource_broadcast(self):
+        connected_list = self.get_list()
+        self._eventsource.publish_to_all(
+            "update_participants",
+            connected_list
+        )
+
+
+
+class DownloadResultsCollector:
+    def __init__(self):
+        # A dict of dicts.  This is referenced by client_id.  The
+        # resulting dict is referenced by audio_id.
+        self._deferreds_by_client_id = {}
+        
+    def make_deferred(self, client_id, audio_id):
+        """Makes a deferred if it doesn't already exist."""
+        # Get dict of deferreds for the given client id
+        try:
+            deferreds_by_audio_id = self._deferreds_by_client_id[client_id]
+        except KeyError:
+            # Client ID doesn't yet have any deferreds, create a dict
+            deferreds_by_audio_id = {}
+            self._deferreds_by_client_id[client_id] = deferreds_by_audio_id
+
+        # Get deferred for the given audio_id
+        try:
+            deferred = deferreds_by_audio_id[audio_id]
+        except KeyError:
+            deferred = defer.Deferred()
+            deferreds_by_audio_id[audio_id] = deferred
+
+        return deferred
+
+    def get_deferred(self, client_id, audio_id):
+        """Gets a deferred."""
+        deferreds_by_audio_id = self._deferreds_by_client_id[client_id]
+        print("deferreds_by_audio_id:", deferreds_by_audio_id)
+        deferred = deferreds_by_audio_id[audio_id]
+        return deferred
+        
+    def remove_deferred(self, client_id, audio_id):
+        """Removes a deferred."""
+        deferreds_by_audio_id = self._deferreds_by_client_id[client_id]
+        del deferreds_by_audio_id[audio_id]
+
+        if len(deferreds_by_audio_id) == 0:
+            del self._deferreds_by_client_id[client_id]
+    

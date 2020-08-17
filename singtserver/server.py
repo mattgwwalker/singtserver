@@ -14,7 +14,12 @@ from twisted.web import server, resource
 from database import Database
 from server_udp import UDPServer
 from server_tcp import TCPServerFactory
-import server_web
+import command
+from server_web import WebServer
+import session_files
+
+# Create empty context
+context = {}
 
 # Setup logging
 import sys
@@ -22,7 +27,11 @@ from twisted.logger import Logger, LogLevel, LogLevelFilterPredicate, \
     textFileLogObserver, FilteringLogObserver, globalLogBeginner
 
 
-logfile = open("server.log", 'w')
+# Create session's required directories
+session_files = session_files.SessionFiles(Path.home())
+context["session_files"] = session_files
+
+logfile = open(session_files.session_dir / "server.log", 'w')
 logtargets = []
 
 # Set up the log observer for stdout.
@@ -47,43 +56,36 @@ globalLogBeginner.beginLoggingTo(logtargets)
 # Start a logger with a namespace for a particular subsystem of our application.
 log = Logger("server")
 
-
-
-# Define directories
-session_dir = Path("session_files/")
-uploads_dir = Path(session_dir / "uploads/")
-backing_track_dir = Path(session_dir / "backing_tracks/")
-
-# Ensure directories exist
-session_dir.mkdir(exist_ok=True)
-uploads_dir.mkdir(exist_ok=True)
-backing_track_dir.mkdir(exist_ok=True)
-
 # Define database filename
-db_filename = session_dir / "database.sqlite3"
+db_filename = session_files.session_dir / "database.sqlite3"
 
 # Create the database
 database = Database(db_filename)
+session_files.set_database(database)
+context["database"] = database
 
 # Create UDP server
 udp_server = UDPServer()
+context["udp_server"] = udp_server
+
+# Create a Command instance
+command = command.Command(context)
+context["command"] = command
 
 # Create the web-server based interface
-www_server, eventsource_resource, backing_track_resource = server_web.create_web_interface(
-    uploads_dir,
-    backing_track_dir,
-    database
-)
+web_server = WebServer(context)
+command.set_web_server(web_server)
+context["web_server"] = web_server
 
 # Create TCP server factory
-tcp_server_factory = TCPServerFactory(
-    eventsource_resource,
-    backing_track_resource
-)
-
+tcp_server_factory = TCPServerFactory(context)
+command.set_tcp_server_factory(tcp_server_factory)
+context["tcp_server_factory"] = tcp_server_factory
 
 endpoints.serverFromString(reactor, "tcp:1234").listen(tcp_server_factory)
 reactor.listenUDP(12345, udp_server)
-reactor.listenTCP(8080, www_server)
+www_port = 8080
+reactor.listenTCP(www_port, web_server.site)
+web_server.set_www_port(www_port)
 
 reactor.run()
