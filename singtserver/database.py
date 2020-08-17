@@ -26,7 +26,8 @@ class Database:
         self.dbpool = adbapi.ConnectionPool(
             "sqlite3",
             db_filename,
-            cp_openfun=setup_connection
+            cp_openfun=setup_connection,
+            check_same_thread=False # See https://twistedmatrix.com/trac/ticket/3629
         )
 
         # If the database did not exist, initialise the database
