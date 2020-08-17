@@ -91,6 +91,16 @@ class Command:
                     participants
                 )
             d_track_audio_id.addCallback(request_download_track)
+
+            def on_success(data):
+                print("SUCCESS! (in request_download)")
+                return data
+            def on_error(error):
+                print("FAILURE! (in request_download)")
+                return error
+            d_track_audio_id.addCallback(on_success)
+            d_track_audio_id.addErrback(on_error)
+            
             ds.append(d_track_audio_id)
 
         # Takes
@@ -126,6 +136,8 @@ class Command:
         d_requested_download = self.request_download(track_id, take_ids, participants)
 
         d = gatherResults([d_combo_id, d_requested_download])
+        def on_success(data):
+            print("All downloads completed successfully!")
         def on_error(error):
             log.warn("Error in preparing for recording: "+str(error))
             return error

@@ -113,7 +113,7 @@ class TCPServer(protocol.Protocol):
     def send_download_request(self, audio_id, partial_url):
         command = {
             "command": "download",
-            "audio_id": str(audio_id),
+            "audio_id": audio_id,
             "partial_url": str(partial_url)
         }
         command_json = json.dumps(command)
@@ -135,14 +135,39 @@ class TCPServer(protocol.Protocol):
 
     def _command_update_downloaded(self, json_data):
         print("In _command_update_downloaded, with json_data: ", json_data)
+        client_id = self.client_id
         audio_id = json_data["audio_id"]
+        result = json_data["result"]
 
+        # Get the deferred that's waiting on this update
+        d = self._shared_context._download_results_collector.get_deferred(
+            client_id,
+            audio_id
+        )
+
+        # Call the appropriate callback
+        if result=="success":
+            print("Calling success callback")
+            d.callback((client_id, audio_id))
+        else:
+            print("Calling error callback")
+            d.errback((client_id, audio_id, json_data["error"]))
+
+        # Remove the deferred from the collector
+        self._shared_context._download_results_collector.remove_deferred(
+            client_id,
+            audio_id
+        )
+
+        return d
+            
  
 class TCPServerFactory(protocol.Factory):
     class SharedContext:
         def __init__(self, context):
             self.eventsource = context["web_server"].eventsource_resource
             self.participants = Participants(context)
+            self._download_results_collector = DownloadResultsCollector()
             
     def __init__(self, context):
         self._context = context
@@ -169,9 +194,24 @@ class TCPServerFactory(protocol.Factory):
         print("Server started")
 
     def broadcast_download_request(self, audio_id, partial_url, participants):
+        print("audio_id:", audio_id)
+        deferreds = []
         for protocol in self._protocols:
             if protocol.client_id in participants:
                 protocol.send_download_request(audio_id, partial_url)
+                d = self._shared_context._download_results_collector.make_deferred(protocol.client_id, audio_id)
+                def on_success(data):
+                    print("SUCCESS (in broadcast_download_request)")
+                    return data
+                d.addCallback(on_success)
+                deferreds.append(d)
+                
+        d = defer.gatherResults(deferreds)
+        def on_success(data):
+            print("SUCCESS on all deferreds (in broadcast_download_request)")
+        d.addCallback(on_success)
+            
+        return d
         
 
 class Participants:
@@ -234,3 +274,46 @@ class Participants:
             "update_participants",
             connected_list
         )
+
+
+
+class DownloadResultsCollector:
+    def __init__(self):
+        # A dict of dicts.  This is referenced by client_id.  The
+        # resulting dict is referenced by audio_id.
+        self._deferreds_by_client_id = {}
+        
+    def make_deferred(self, client_id, audio_id):
+        """Makes a deferred if it doesn't already exist."""
+        # Get dict of deferreds for the given client id
+        try:
+            deferreds_by_audio_id = self._deferreds_by_client_id[client_id]
+        except KeyError:
+            # Client ID doesn't yet have any deferreds, create a dict
+            deferreds_by_audio_id = {}
+            self._deferreds_by_client_id[client_id] = deferreds_by_audio_id
+
+        # Get deferred for the given audio_id
+        try:
+            deferred = deferreds_by_audio_id[audio_id]
+        except KeyError:
+            deferred = defer.Deferred()
+            deferreds_by_audio_id[audio_id] = deferred
+
+        return deferred
+
+    def get_deferred(self, client_id, audio_id):
+        """Gets a deferred."""
+        deferreds_by_audio_id = self._deferreds_by_client_id[client_id]
+        print("deferreds_by_audio_id:", deferreds_by_audio_id)
+        deferred = deferreds_by_audio_id[audio_id]
+        return deferred
+        
+    def remove_deferred(self, client_id, audio_id):
+        """Removes a deferred."""
+        deferreds_by_audio_id = self._deferreds_by_client_id[client_id]
+        del deferreds_by_audio_id[audio_id]
+
+        if len(deferreds_by_audio_id) == 0:
+            del self._deferreds_by_client_id[client_id]
+    
