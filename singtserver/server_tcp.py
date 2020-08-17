@@ -241,8 +241,11 @@ class Participants:
     
     def leave(self, client_id):
         print(self._connected_participants)
-        del self._connected_participants[client_id]
-        self.eventsource_broadcast()
+        try:
+            del self._connected_participants[client_id]
+            self.eventsource_broadcast()
+        except KeyError:
+            log.warn(f"Failed to find participant with client id {client_id}; could not remove from participants list")
 
     
     def get_list(self):
