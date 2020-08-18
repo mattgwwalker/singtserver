@@ -103,11 +103,18 @@
                 <div id="zero_tracks" class="d-none alert alert-info" role="alert">
                   <h4 class="alert-heading">Zero Tracks</h4>
                   <p>
-	<img src="./icons/file-music.svg" alt="" width="32" height="32" title="Person" class="mr-2">
+	                 <img src="./icons/file-music.svg" alt="" width="32" height="32" title="Person" class="mr-2">
                     No tracks have been uploaded yet
                   </p>
                 </div>
 
+                <div id="tracks_server_disconnection" class="d-none alert alert-danger" role="alert">
+                  <h4 class="alert-heading">Server Disconnection</h4>
+                  <p>
+	                 <img src="./icons/exclamation-circle.svg" alt="" width="32" height="32" title="Person" class="mr-2">
+                    A disconnection with the server occurred.  Try refreshing.
+                  </p>
+                </div>
                 
               </div> <!-- /col -->
             </div> <!-- /row -->
@@ -245,6 +252,7 @@
                 <h3>Participants</h3>
                 <ul class="d-none list-group" id="participants">
                 </ul>
+                
                 <div id="no_participants" class="d-none alert alert-info" role="alert">
                   <h4 class="alert-heading">Uh oh</h4>
                   <p>
@@ -255,6 +263,15 @@
                   <hr class='thin'>
                   <p class="mb-0 text-sm text-muted">If a tree falls in the forest without a conductor... </p>
                 </div>
+
+                <div id="participants_server_disconnection" class="d-none alert alert-danger" role="alert">
+                  <h4 class="alert-heading">Server Disconnection</h4>
+                  <p>
+	                 <img src="./icons/exclamation-circle.svg" alt="" width="32" height="32" title="Person" class="mr-2">
+                    A disconnection with the server occurred.  Try refreshing.
+                  </p>
+                </div>
+
               </div> <!-- /col -->
 
               

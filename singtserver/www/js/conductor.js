@@ -34,6 +34,11 @@ SINGT.wireup.eventsource = function(){
     let eventSource = new EventSource('eventsource');
     eventSource.addEventListener("update_participants", SINGT.participants.update, false);
     eventSource.addEventListener("update_backing_tracks", SINGT.backing_tracks.update, false);
+    eventSource.onerror = function() {
+        console.log("Eventsource error");
+        SINGT.backing_tracks.server_disconnected();        
+        SINGT.participants.server_disconnected();
+    }
 };
 
 SINGT.wireup.page_tracks = function(){
@@ -241,6 +246,13 @@ SINGT.participants.update = function() {
     }
 };
 
+SINGT.participants.server_disconnected = function() {
+    $("#participants_server_disconnection").removeClass('d-none');
+    $("#no_participants").addClass('d-none');
+    $("#participants").addClass('d-none');
+};
+
+
 SINGT.backing_tracks = {};
 
 SINGT.backing_tracks.upload = function() {
@@ -326,6 +338,12 @@ SINGT.backing_tracks.update = function() {
     $("#playback_select_tracks").html(optionsHtml).removeClass('d-none');
 };
 
+
+SINGT.backing_tracks.server_disconnected = function() {
+    $("#tracks_server_disconnection").removeClass('d-none');
+    $("#zero_tracks").addClass('d-none');
+    $("#backing_tracks").addClass('d-none');
+};
 
 
 $(document).ready(function(){
