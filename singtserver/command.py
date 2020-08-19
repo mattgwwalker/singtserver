@@ -1,3 +1,5 @@
+import json
+
 from twisted.internet.defer import gatherResults
 from twisted.logger import Logger
 
@@ -83,14 +85,14 @@ class Command:
                 str(track_path)
             )
             
-            d_track_audio_id = self._database.get_track_audio_id(track_id)
+            d = self._database.get_track_audio_id(track_id)
             def request_download_track(audio_id):
                 return self._tcp_server_factory.broadcast_download_request(
                     audio_id,
                     track_path,
                     participants
                 )
-            d_track_audio_id.addCallback(request_download_track)
+            d.addCallback(request_download_track)
 
             def on_success(data):
                 print("SUCCESS! (in request_download)")
@@ -98,10 +100,10 @@ class Command:
             def on_error(error):
                 print("FAILURE! (in request_download)")
                 return error
-            d_track_audio_id.addCallback(on_success)
-            d_track_audio_id.addErrback(on_error)
+            d.addCallback(on_success)
+            d.addErrback(on_error)
             
-            ds.append(d_track_audio_id)
+            ds.append(d)
 
         # Takes
         for take_id in take_ids:
@@ -111,7 +113,7 @@ class Command:
                 str(take_path)
             )
             
-            d_take_audio_id = self._database.get_take_audio_id(take_id)
+            d = self._database.get_take_audio_id(take_id)
             def request_download_take(audio_id):
                 this_take_path = take_path
                 return self._tcp_server_factory.broadcast_download_request(
@@ -119,8 +121,8 @@ class Command:
                     this_take_path,
                     participants
                 )
-            d_take_audio_id.addCallback(request_download_take)
-            ds.append(d_take_audio_id)
+            d.addCallback(request_download_take)
+            ds.append(d)
 
         # Gather deferreds
         d = gatherResults(ds)
@@ -137,10 +139,22 @@ class Command:
 
         d = gatherResults([d_combo_id, d_requested_download])
         def on_success(data):
+            combo_id, _ = data
             print("All downloads completed successfully!")
+            # Send notification over EventSource
+            message = {
+                "combination_id": combo_id
+            }
+            message_json = json.dumps(message)
+            eventsource = self._context["web_server"].eventsource_resource
+            eventsource.publish_to_all(
+                "ready_to_record",
+                message_json
+            )
         def on_error(error):
             log.warn("Error in preparing for recording: "+str(error))
             return error
+        d.addCallback(on_success)
         d.addErrback(on_error)
         
         return d

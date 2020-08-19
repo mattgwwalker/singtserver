@@ -22,10 +22,15 @@
     background-color: #04abc6 ! important;
     border-color: #04abc6 ! important;
 }
+.btn-primary:disabled:hover {
+    background-color: #04abc6 ! important;
+    border-color: #04abc6 ! important;
+}
 .btn-primary:hover {
     background-color: #038fa5 ! important;
     border-color: #038fa5 ! important;
 }
+
 .text-muted {
 	color: rgba(0,0,0,0.25) ! important;
 }

@@ -167,7 +167,17 @@ class WebCommand(resource.Resource):
 
         try:
             d = self._command.prepare_for_recording(track_id, take_ids, participants)
-            d.addCallback(self._make_success(request))
+            def make_json_response(data):
+                combination_id = data[0]
+                result = {
+                    "result":"success",
+                    "combination_id":combination_id
+                }
+                result_json = json.dumps(result).encode("utf-8")
+                request.write(result_json)
+                request.finish()
+                return data
+            d.addCallback(make_json_response)
             d.addErrback(self._make_failure(
                 request,
                 message="Failed during preparation of recording",

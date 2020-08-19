@@ -34,6 +34,8 @@ SINGT.wireup.eventsource = function(){
     let eventSource = new EventSource('eventsource');
     eventSource.addEventListener("update_participants", SINGT.participants.update, false);
     eventSource.addEventListener("update_backing_tracks", SINGT.backing_tracks.update, false);
+    eventSource.addEventListener("ready_to_record", SINGT.recording.ready_to_record, false);
+    
     eventSource.onerror = function() {
         console.log("Eventsource error");
         SINGT.backing_tracks.server_disconnected();        
@@ -51,6 +53,20 @@ SINGT.wireup.page_tracks = function(){
 };
 
 SINGT.wireup.page_playback = function(){
+    // Combination buttons
+    $("#playback_combo_track_only").click(function() {
+        $("#playback_multiselect_takes").children("option").prop("selected", false);
+        $("#playback_multiselect_takes").prop("disabled",true);
+    });
+
+    $("#playback_combo_mix").click(function() {
+        $("#playback_multiselect_takes").prop("disabled",false);
+    });
+    
+    $("#playback_combo_takes_only").click(function() {
+        $("#playback_multiselect_takes").prop("disabled",false);
+    });
+    
     $("#playback_button_play").click(function() {
         console.log("Playback button clicked");
 
@@ -136,6 +152,26 @@ SINGT.wireup.page_playback = function(){
         return false; // Do not reload page
     });
 
+    disable_inputs = function() {
+        $("#playback_select_tracks").prop("disabled",true);
+        $("#playback_combos").children("label").addClass("disabled");
+        $("#playback_multiselect_takes").prop("disabled",true);
+        $("#recording_button_prepare").prop("disabled",true);
+        $("#recording_button_record").prop("disabled",true);
+    }
+
+    enable_inputs = function() {
+        $("#playback_select_tracks").prop("disabled",false);
+        $("#playback_combos").children("label").removeClass("disabled");
+        if ($("#playback_combo_track_only").is(":checked")) {
+            $("#playback_multiselect_takes").prop("disabled",true);
+        } else {
+            $("#playback_multiselect_takes").prop("disabled",false);
+        }
+        $("#recording_button_prepare").prop("disabled",false);
+        //$("#recording_button_record").prop("disabled",false);
+    }
+    
     $("#recording_button_prepare").click(function() {
         console.log("'Prepare for Recording' button clicked");
 
@@ -193,16 +229,36 @@ SINGT.wireup.page_playback = function(){
             dataType: "json",
             contentType: "application/json",
             success: function(msg) {
-                console.log(msg);
+                combination_id = msg["combination_id"];
+                console.log("combination_id:",combination_id);
+                
             },
             error: function(jqXHR, st, error) {
                 // Hopefully we should never reach here
                 alert("FAILED to send command 'prepare_for_recording'");
             }
         });
+
+        // Disable the other inputs
+        disable_inputs();
+
+        // Enable the cancel button
+        $("#recording_button_cancel").prop("disabled",false);
+        
         return false; // Do not reload page
     });
 
+    
+    $("#recording_button_cancel").click(function() {
+        // Enable the other inputs
+        enable_inputs();
+        
+        // Disable the cancel button
+        $("#recording_button_cancel").prop("disabled",true);
+
+        // Do not reload page
+        return false;
+    });
 };
 
 SINGT.wireup.forms = function() {
@@ -343,6 +399,18 @@ SINGT.backing_tracks.server_disconnected = function() {
     $("#tracks_server_disconnection").removeClass('d-none');
     $("#zero_tracks").addClass('d-none');
     $("#backing_tracks").addClass('d-none');
+};
+
+
+SINGT.recording = {};
+
+SINGT.recording.ready_to_record = function() {
+    let parsed_data = JSON.parse(event.data);
+    console.log("parsed_data:", parsed_data);
+
+    // Enable 'Record' button
+    $("#recording_button_record").prop("disabled",false);
+    
 };
 
 
