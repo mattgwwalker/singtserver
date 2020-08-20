@@ -93,16 +93,6 @@ class Command:
                     participants
                 )
             d.addCallback(request_download_track)
-
-            def on_success(data):
-                print("SUCCESS! (in request_download)")
-                return data
-            def on_error(error):
-                print("FAILURE! (in request_download)")
-                return error
-            d.addCallback(on_success)
-            d.addErrback(on_error)
-            
             ds.append(d)
 
         # Takes
@@ -134,19 +124,32 @@ class Command:
         return d
 
     def prepare_for_recording(self, track_id, take_ids, participants):
-        d_combo_id = self.prepare_combination(track_id, take_ids)
-        d_requested_download = self.request_download(track_id, take_ids, participants)
+        d = self.prepare_combination(track_id, take_ids)
+        def request_download(combo_id):
+            d = self.request_download(track_id, take_ids, participants)
+            def on_success(data):
+                print("All downloads completed successfully")
+                return {
+                    "combination_id": combo_id,
+                    "result": "success"
+                }
+            d.addCallback(on_success)
+            def on_error(error):
+                log.error(f"Failed to download for all clients: {error}")
+                # Note that the error is being absorbed
+                return {
+                    "combination_id": combo_id,
+                    "result": "failure"
+                }
+            d.addErrback(on_error)
+            return d
+        d.addCallback(request_download)
 
-        d = gatherResults([d_combo_id, d_requested_download])
-        def on_success(data):
-            combo_id, _ = data
-            print("All downloads completed successfully!")
-            # Send notification over EventSource
-            message = {
-                "combination_id": combo_id
-            }
+        eventsource = self._context["web_server"].eventsource_resource
+        def on_success(message):
+            # Send notification over EventSource: this may be either
+            # success or failure
             message_json = json.dumps(message)
-            eventsource = self._context["web_server"].eventsource_resource
             eventsource.publish_to_all(
                 "ready_to_record",
                 message_json
