@@ -1,0 +1,5 @@
+singtserver/www/js/bootstrap.min.js
+singtserver/www/js/bootstrap.min.js.map
+singtserver/www/js/jquery-3.5.1.js
+singtserver/www/js/jquery.slim.min.js
+singtserver/www/icons/
