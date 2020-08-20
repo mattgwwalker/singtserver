@@ -1,5 +1,6 @@
 import json
 
+from twisted.internet import defer
 from twisted.internet.defer import gatherResults
 from twisted.logger import Logger
 
@@ -63,17 +64,22 @@ class Command:
                 # Add the combination into the database
                 return self._database.add_combination(track_id, take_ids)
             return combo_id
+        d.addCallback(on_success)
 
         def on_error(error):
             log.warn("Exception occurred while attempting to get a combination ID from the database: "+ str(error))
             raise Exception("Failed to get a combination ID from the database")
-
-        d.addCallback(on_success)
         d.addErrback(on_error)
+
         return d
 
 
     def request_download(self, track_id=None, take_ids=[], participants=[]):
+        """Requests download by the clients.
+
+        Returns a list of deferreds, once for each participant.
+
+        """
         # List of deferreds to gather
         ds = []
         
@@ -124,40 +130,106 @@ class Command:
         return d
 
     def prepare_for_recording(self, track_id, take_ids, participants):
-        d = self.prepare_combination(track_id, take_ids)
+        """Prepares the clients for recording.
+
+        Returns a tuple: the first item is a deferred that resolves
+        when the combination id has been obtained from the database
+        and the download requests have been send, and a second item is
+        a deferred that resolves when the clients have all finished
+        their downloads.
+
+        """
+        d1 = self.prepare_combination(track_id, take_ids)
+        d2 = defer.Deferred()
+        def on_combination_prepared(combination_id):
+            print("We have combination id:", combination_id)
+            d2.callback(combination_id)
+            return combination_id
+        d1.addCallback(on_combination_prepared)
+        
         def request_download(combo_id):
             d = self.request_download(track_id, take_ids, participants)
             def on_success(data):
                 print("All downloads completed successfully")
-                return {
-                    "combination_id": combo_id,
-                    "result": "success"
-                }
+                return (combo_id, "success")
             d.addCallback(on_success)
             def on_error(error):
                 log.error(f"Failed to download for all clients: {error}")
                 # Note that the error is being absorbed
-                return {
-                    "combination_id": combo_id,
-                    "result": "failure"
-                }
+                return (combo_id, "failure")
             d.addErrback(on_error)
             return d
-        d.addCallback(request_download)
+        d2.addCallback(request_download)
 
         eventsource = self._context["web_server"].eventsource_resource
-        def on_success(message):
+        def on_success(data):
+            combo_id, result = data
             # Send notification over EventSource: this may be either
             # success or failure
+            message =  {
+                "combination_id": combo_id,
+                "result": result
+            }
             message_json = json.dumps(message)
             eventsource.publish_to_all(
                 "ready_to_record",
                 message_json
             )
+            return combo_id
+        d2.addCallback(on_success)
+            
         def on_error(error):
             log.warn("Error in preparing for recording: "+str(error))
             return error
-        d.addCallback(on_success)
-        d.addErrback(on_error)
+        d2.addErrback(on_error)
         
-        return d
+        return (d1, d2)
+
+    def record(self, take_name, combination_id, participants):
+        # We need the audio ids of the track and takes that make up
+        # the combination.
+        d1 = self._database.get_audio_ids_from_combination_id(combination_id)
+        
+        def on_success(audio_ids):
+            print(f"Given combination id {combination_id} we got these backing audio ids: {audio_ids}")
+            return audio_ids
+        d1.addCallback(on_success)
+
+        def on_error(error):
+            log.error(f"Failed to get audio ids from combination id ({combination_id}): {error}")
+            return error
+        d1.addErrback(on_error)
+
+        # Create a new take
+        d2 = self._database.add_take(
+            take_name,
+            combination_id
+        )
+
+        # We need the audio_ids of the recordings that the clients
+        # will send back
+        def add_recording_ids(take_id):
+            return self._database.add_recording_audio_ids(
+                take_id,
+                participants
+            )
+        d2.addCallback(add_recording_ids)
+
+        d = gatherResults([d1, d2])
+        return d # TEMP
+        # def on_success(data):
+        #     backing_audio_ids, recording_ids = data
+        #     # Send the record command to each of the participants
+        #     return self._tcp_server_factory.broadcast_record_request(
+        #         backing_audio_ids,
+        #         recording_ids,
+        #         participants
+        #     )
+        # d.addCallback(on_success)
+
+        # def on_error(error):
+        #     log.error(f"Failed to record: {error}")
+        #     return error
+        # d.addErrback(on_error)
+
+        

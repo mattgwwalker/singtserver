@@ -131,11 +131,11 @@ class Database:
         def on_success(data):
             log.info("Successfully added combination to database; combination id: "+str(data))
             return data
+        d.addCallback(on_success)
+        
         def on_error(error):
             log.error("Failed to add combination to the database: "+str(error))
             raise Exception("Failed to add combination to the database")
-
-        d.addCallback(on_success)
         d.addErrback(on_error)
 
         return d
@@ -146,6 +146,7 @@ class Database:
 
         Returns combo_id.
         """
+        log.info(f"Adding combination to database with track id = {track_id} and take_ids = {take_ids}")
         # Sanity check arguments
         if (track_id is None
             and len(take_ids) == 0):
@@ -299,3 +300,129 @@ class Database:
 
         return d
         
+    def get_audio_ids_from_combination_id(self, combination_id):
+        def execute_sql(cursor):
+            # Get Track ID.  There should be either zero or one, but
+            # not more.
+            cursor.execute(
+                "SELECT BackingTracks.audioId\n"+
+                "FROM Combinations\n"+
+                "LEFT JOIN BackingTracks\n"+
+                "ON Combinations.backingTrackId = BackingTracks.id\n"+
+                "WHERE combinations.id = ?",
+                (combination_id,)
+            )
+            rows = cursor.fetchall()
+            if len(rows) == 0:
+                # We don't have a backing track; that's fine, move on
+                # to the takes.
+                backing_audio_ids = []
+            elif len(rows) == 1:
+                # We have one backing track
+                row = rows[0]
+                audio_id = row[0]
+                backing_audio_ids = [audio_id]
+            else:
+                # We have more than one backing track; error.
+                raise Exception(
+                    f"More than one backing track matched "+
+                    f"combination id {combination_id}; this "+
+                    f"shouldn't be possible"
+                )
+
+            # Get the Take IDs.  There may be many of these.  But if
+            # there wasn't a backing track id, then there needs to be
+            # at least one Take ID.
+            cursor.execute(
+                "SELECT audioId\n"+
+                "FROM CombinationsDetail\n"+
+                "LEFT JOIN Takes\n"+
+                "ON CombinationsDetail.id = Takes.combinationId\n"+
+                "WHERE CombinationsDetail.combinationId = ?",
+                (combination_id,)
+            )
+            rows = cursor.fetchall()
+            if len(rows) == 0:
+                # This is only as issue if we don't have any backing
+                # tracks either
+                if len(backing_audio_ids) == 0:
+                    raise Exception(
+                        f"We have neither a backing track nor takes "+
+                        f"for the given combination id ({combination_id});"+
+                        f"this shouldn't be possible"
+                    )
+            else:
+                # Add the Take IDs to the list 
+                takes_audio_ids = [row[0] for row in rows]
+                backing_audio_ids += takes_audio_ids
+                
+            return backing_audio_ids
+
+        d = self.dbpool.runInteraction(execute_sql)
+        def on_error(error):
+            log.warn(
+                "Failed to get backing audio ids from combination id: "+
+                str(error)
+            )
+            return error
+        d.addErrback(on_error)
+
+        return d
+        
+    def add_take(self, take_name, combination_id):
+        def execute_sql(cursor):
+            # Create audio id
+            cursor.execute("INSERT INTO AudioIdentifiers DEFAULT VALUES")
+            audio_id = cursor.lastrowid
+
+            # Create take
+            cursor.execute(
+                "INSERT INTO Takes (audioId, combinationId, takeName, complete) "+
+                "VALUES (?, ?, ?, 0)",
+                (audio_id, combination_id, take_name)
+            )
+            take_id = cursor.lastrowid
+
+            return take_id
+
+        d = self.dbpool.runInteraction(execute_sql)
+        def on_error(error):
+            log.warn(
+                "Failed to add take: "+
+                str(error)
+            )
+            return error
+        d.addErrback(on_error)
+
+        return d
+        
+    def add_recording_audio_ids(self, take_id, participants):
+        def execute_sql(cursor):
+            audio_ids = []
+            for participant_id in participants:
+                # Create audio id
+                cursor.execute("INSERT INTO AudioIdentifiers DEFAULT VALUES")
+                audio_id = cursor.lastrowid
+
+                # Add entry into Recordings
+                cursor.execute(
+                    "INSERT INTO Recordings "+
+                    "(audioId, participantId, takeId, complete) "+
+                    "VALUES (?, ?, ?, 0)",
+                    (audio_id, participant_id, take_id)
+                )
+                
+                audio_ids.append(audio_id)
+            return audio_ids
+
+        d = self.dbpool.runInteraction(execute_sql)
+        def on_error(error):
+            log.warn(
+                "Failed to add recordings for participants: "+
+                str(error)
+            )
+            return error
+        d.addErrback(on_error)
+
+        return d
+

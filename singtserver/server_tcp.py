@@ -119,6 +119,15 @@ class TCPServer(protocol.Protocol):
         command_json = json.dumps(command)
         self.send_message(command_json)
 
+    def send_record_request(self, audio_ids, recording_audio_id):
+        command = {
+            "command": "record",
+            "backing_audio_ids": audio_ids,
+            "recording_audio_id": recording_audio_id
+        }
+        command_json = json.dumps(command)
+        self.send_message(command_json)
+
     def _command_announce(self, json_data):
         """Announces username, which is then stored in the shared context.
         Returns True if username is unused."""
@@ -194,25 +203,46 @@ class TCPServerFactory(protocol.Factory):
         print("Server started")
 
     def broadcast_download_request(self, audio_id, partial_url, participants):
-        print("audio_id:", audio_id)
         deferreds = []
         for protocol in self._protocols:
             if protocol.client_id in participants:
                 protocol.send_download_request(audio_id, partial_url)
                 d = self._shared_context._download_results_collector.make_deferred(protocol.client_id, audio_id)
-                def on_success(data):
-                    print("SUCCESS (in broadcast_download_request)")
-                    return data
-                d.addCallback(on_success)
                 deferreds.append(d)
                 
         d = defer.gatherResults(deferreds)
-        def on_success(data):
-            print("SUCCESS on all deferreds (in broadcast_download_request)")
-        d.addCallback(on_success)
             
         return d
-        
+
+    def broadcast_record_request(self, backing_audio_ids, recording_audio_ids, participants):
+        """Request clients start recording.
+
+        backing_audio_ids is a list of audio ids that specify the
+        audio that should be played as the backing audio.  This may be
+        a combination of audio ids for tracks and takes.
+
+        recording_audio_ids is a dictionary of audio_ids, keyed by
+        client_id.  The audio_id is for the client's recording.  They
+        will use this ID to identify the file they send back.
+
+        participants is a list of client_ids; it specifies which
+        clients will be asked to record.
+
+        The method returns a deferred once all clients have finished
+        sending their recordings, or an error has occurred.
+
+        """
+        deferreds = []
+        for protocol in self._protocols:
+            if protocol.client_id in participants:
+                recording_audio_id = recording_audio_ids[protocol.client_id]
+                protocol.send_record_request(backing_audio_ids, recording_audio_id)
+                #d = self._shared_context._download_results_collector.make_deferred(protocol.client_id, audio_id)
+                #deferreds.append(d)
+                
+        d = defer.gatherResults(deferreds)
+        return d
+    
 
 class Participants:
     def __init__(self, context):
@@ -225,6 +255,7 @@ class Participants:
 
 
     def join(self, client_id, name):
+
         """Assigns name to client_id, overwriting if it exists already.
 
         Broadcasts new client on eventsource.

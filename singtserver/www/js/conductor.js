@@ -231,7 +231,7 @@ SINGT.wireup.page_playback = function(){
             success: function(msg) {
                 combination_id = msg["combination_id"];
                 console.log("combination_id:",combination_id);
-                
+                SINGT.recording.combination_id = combination_id;
             },
             error: function(jqXHR, st, error) {
                 // Hopefully we should never reach here
@@ -258,6 +258,58 @@ SINGT.wireup.page_playback = function(){
 
         // Do not reload page
         return false;
+    });
+
+    
+    $("#recording_button_record").click(function() {
+        console.log("'Record' button clicked");
+
+        // Get take name
+        take_name = $("#take_name").val()
+        
+        // Get combination ID
+        combination_id = SINGT.recording.combination_id;
+        
+        // Get participants
+        participants =
+            $("#participants")
+            .find("input")
+            .map(function(i, v) {
+                if ($(v).prop("checked")) {
+                    return $(v).val();
+                }
+            })
+            .get(); // get the array
+
+        // Form command
+        command = {
+            "command": "record",
+            "take_name": take_name,
+            "combination_id": combination_id,
+            "participants": participants
+        }
+        json_command = JSON.stringify(command);
+        
+        // Send command
+        console.log("command:", command);
+        $.ajax({
+            type: 'POST',
+            url: 'command',
+            data: json_command,
+            dataType: "json",
+            contentType: "application/json",
+            success: function(msg) {
+                console.log("Success from 'Record'");
+            },
+            error: function(jqXHR, st, error) {
+                // Hopefully we should never reach here
+                alert("FAILED to send command 'record'");
+            }
+        });
+
+        // TODO: Enable all the inputs?  Or do we wait till the end of the recording?
+        
+        return false; // Do not reload page
     });
 };
 
@@ -359,6 +411,7 @@ SINGT.backing_tracks.upload = function() {
 }
 
 SINGT.backing_tracks.update = function() {
+    console.log("Received backing tracks list update via EventSource")
     let parsed_data = JSON.parse(event.data);
 
     if (parsed_data.length == 0) {
@@ -405,11 +458,21 @@ SINGT.backing_tracks.server_disconnected = function() {
 SINGT.recording = {};
 
 SINGT.recording.ready_to_record = function() {
+    console.log("Received ready-to-record update via EventSource")
     let parsed_data = JSON.parse(event.data);
     console.log("parsed_data:", parsed_data);
 
-    // Enable 'Record' button
-    $("#recording_button_record").prop("disabled",false);
+    combination_id = parsed_data["combination_id"]
+    result = parsed_data["result"]
+
+    if (result == "success") {
+        // Enable 'Record' button
+        $("#recording_button_record").prop("disabled",false);
+        $("#recording_response").html("<p>Selected clients are prepared for recording.  Press 'Record' to begin.</p>");
+    } else {
+        // Alert user that the preparation process went wrong.
+        $("#recording_response").html("<p>Bugger.  Something went wrong.  The selected clients are not prepared for recording.  Maybe try again?</p>");
+    }
     
 };
 

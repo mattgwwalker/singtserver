@@ -8,6 +8,11 @@ from twisted.web.static import File
 from backing_track import BackingTrack
 from singtcommon import EventSource
 
+
+# Start a logger with a namespace for a particular subsystem of our application.
+from twisted.logger import Logger
+log = Logger("server_web")
+
 class WebServer:
     def __init__(self, context):
         session_files = context["session_files"]
@@ -94,6 +99,7 @@ class WebCommand(resource.Resource):
         return f
 
     def _failure(self, error, request, finish=False):
+        log.error(error)
         request.setResponseCode(500)
         result = {
             "result":"failure",
@@ -106,6 +112,7 @@ class WebCommand(resource.Resource):
 
     def _make_failure(self, request, message = None, raise_exception=False):
         def f(error):
+            log.error(str(error))
             nonlocal message
             if message is None:
                 message = error
@@ -118,6 +125,7 @@ class WebCommand(resource.Resource):
         self.register_command("play_for_everyone", self._command_play_for_everyone)
         self.register_command("stop_for_everyone", self._command_stop_for_everyone)
         self.register_command("prepare_for_recording", self._command_prepare_for_recording)
+        self.register_command("record", self._command_record)
 
     def _command_play_for_everyone(self, content, request):
         try:
@@ -166,9 +174,15 @@ class WebCommand(resource.Resource):
             raise Exception("Failed to find 'participants' key in content while preparing for recording")
 
         try:
-            d = self._command.prepare_for_recording(track_id, take_ids, participants)
-            def make_json_response(data):
-                combination_id = data[0]
+            # This also returns a second deferred, however we can
+            # ignore that as here we need only respond to the request
+            # itself.
+            d, _ = self._command.prepare_for_recording(
+                track_id,
+                take_ids,
+                participants
+            )
+            def make_json_response(combination_id):
                 result = {
                     "result":"success",
                     "combination_id":combination_id
@@ -176,7 +190,7 @@ class WebCommand(resource.Resource):
                 result_json = json.dumps(result).encode("utf-8")
                 request.write(result_json)
                 request.finish()
-                return data
+                return combination_id
             d.addCallback(make_json_response)
             d.addErrback(self._make_failure(
                 request,
@@ -191,3 +205,38 @@ class WebCommand(resource.Resource):
 
         return server.NOT_DONE_YET
 
+    
+    def _command_record(self, content, request):
+        # Extract take name
+        try:
+            take_name = content["take_name"]
+        except KeyError:
+            take_name = ""
+        
+        # Extract combination ID
+        try:
+            combination_id = int(content["combination_id"])
+        except KeyError:
+            message = "Invalid 'record' command; combination_id not specified"
+            self._failure(message, request, finish=False)
+            raise Exception(message)
+
+        try:
+            participants = [int(id) for id in content["participants"]]
+        except KeyError:
+            raise Exception("Failed to find 'participants' key in content while preparing for recording")
+
+        print(f"Record combination id {combination_id} with participants {participants}")
+
+        d = self._command.record(
+            take_name,
+            combination_id,
+            participants
+        )
+
+        def on_success(_):
+            self._success("Recording started", request)
+        d.addCallback(on_success)
+        
+        return server.NOT_DONE_YET
+        

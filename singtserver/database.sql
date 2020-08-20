@@ -9,7 +9,7 @@ instance. Insert the version number */
 CREATE TABLE Version (
        version INTEGER NOT NULL
 );     
-INSERT INTO Version (version) VALUES (3); /* This version */
+INSERT INTO Version (version) VALUES (4); /* This version */
 
 
 /* Create the Participants table. */
@@ -57,7 +57,6 @@ CREATE TABLE Takes (
        id INTEGER PRIMARY KEY,
        audioId INTEGER NOT NULL REFERENCES AudioIdentifiers(id),
        combinationId INTEGER NOT NULL REFERENCES Combinations(id),
-       takeNumber INTEGER NOT NULL,
        takeName TEXT,
        complete BOOLEAN NOT NULL DEFAULT 0
 );
@@ -102,8 +101,8 @@ VALUES (1, 1, 1);
 INSERT INTO AudioIdentifiers (id)
 VALUES (3);
 
-INSERT INTO Takes (id, audioId, combinationId, takeNumber, takeName)
-VALUES (1, 3, 1, 1, 'First');
+INSERT INTO Takes (id, audioId, combinationId, takeName)
+VALUES (1, 3, 1, 'First');
 
 INSERT INTO AudioIdentifiers (id)
 VALUES (4);
@@ -117,6 +116,6 @@ VALUES (2, 1);
 INSERT INTO AudioIdentifiers (id)
 VALUES (5);
 
-INSERT INTO Takes (id, audioId, combinationId, takeNumber, takeName)
-VALUES (2, 5, 2, 2, 'Second');
+INSERT INTO Takes (id, audioId, combinationId, takeName)
+VALUES (2, 5, 2, 'Second');
 
