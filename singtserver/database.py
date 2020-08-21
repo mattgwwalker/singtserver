@@ -1,11 +1,12 @@
 from twisted.enterprise import adbapi
-from twisted.logger import Logger
+from twisted.internet import defer
 
 # Start a logger with a namespace for a particular subsystem of our application.
+from twisted.logger import Logger
 log = Logger("database")
 
 class Database:
-    def __init__(self, db_filename):
+    def __init__(self, db_filename, context):
 
         # Note if database already exists
         database_exists = db_filename.is_file()
@@ -23,7 +24,7 @@ class Database:
         
         # Open a connection to the database.  SQLite will create the file if
         # it doesn't already exist.
-        self.dbpool = adbapi.ConnectionPool(
+        dbpool = adbapi.ConnectionPool(
             "sqlite3",
             db_filename,
             cp_openfun=setup_connection,
@@ -33,15 +34,46 @@ class Database:
         # If the database did not exist, initialise the database
         if not database_exists:
             print("Database requires initialisation")
-            self._d = self.dbpool.runInteraction(self._initialise_database)
+            self._db_ready = dbpool.runInteraction(self._initialise_database)
             def on_success(data):
                 log.info("Database successfully initialised")
+                return dbpool
             def on_error(data):
-                log.error("Failed to initialise the database: "+str(data))
+                log.error(f"Failed to initialise the database: {data}")
+                reactor = context["reactor"]
                 reactor.stop()
 
-            self._d.addCallback(on_success)
-            self._d.addErrback(on_error)
+            self._db_ready.addCallback(on_success)
+            self._db_ready.addErrback(on_error)
+        else:
+            # Database exists already
+            self._db_ready = defer.Deferred()
+            self._db_ready.callback(dbpool)
+
+        # Check that database is the correct version
+        expected_version = 4
+        def check_version(cursor):
+            cursor.execute("SELECT version FROM Version")
+            row = cursor.fetchone()
+            if row is None:
+                raise Exception("No version found in Version table of database")
+            if row[0] == expected_version:
+                log.info(f"Client database version {expected_version}")
+                return dbpool
+            else:
+                log.error(f"Database version ({row[0]}) did not match expected version ({expected_version}).  Terminating.")
+                reactor = context["reactor"]
+                reactor.stop()
+
+        def run_check_version(dbpool):
+            return dbpool.runInteraction(check_version)
+        self._db_ready.addCallback(run_check_version)
+
+        def on_error(error):
+            log.error("Failed to verify the database: "+str(error))
+            reactor = context["reactor"]
+            reactor.stop()
+        self._db_ready.addErrback(on_error)
 
         
     # Initialise the database structure from instructions in file
@@ -125,8 +157,10 @@ class Database:
                 return None
             combo_id = row[0]
             return combo_id
-                
-        d = self.dbpool.runInteraction(get_combo)
+
+        def when_ready(dbpool):
+            return dbpool.runInteraction(get_combo)
+        d = self._db_ready.addCallback(when_ready)
 
         def on_success(data):
             log.info("Successfully added combination to database; combination id: "+str(data))
@@ -176,8 +210,10 @@ class Database:
                 )
                 
             return combo_id
-                
-        d = self.dbpool.runInteraction(add_combo)
+
+        def when_ready(dbpool):
+            return dbpool.runInteraction(add_combo)
+        d = self._db_ready.addCallback(when_ready)
 
         def on_success(data):
             log.info("Successfully added combination to database; combination id: "+str(data))
@@ -203,7 +239,10 @@ class Database:
             else:
                 return results[0]
             
-        d = self.dbpool.runInteraction(execute_sql)
+        def when_ready(dbpool):
+            return dbpool.runInteraction(execute_sql)
+        d = self._db_ready.addCallback(when_ready)
+
         def on_error(error):
             log.warn("Failed to get audio ID for track id ({track_id}): "+
                      str(error)
@@ -225,7 +264,10 @@ class Database:
             else:
                 return results[0]
             
-        d = self.dbpool.runInteraction(execute_sql)
+        def when_ready(dbpool):
+            return dbpool.runInteraction(execute_sql)
+        d = self._db_ready.addCallback(when_ready)
+
         def on_error(error):
             log.warn("Failed to get audio ID for take id ({take_id}): "+
                      str(error)
@@ -270,7 +312,10 @@ class Database:
             return client_id
             
 
-        d = self.dbpool.runInteraction(execute_sql)
+        def when_ready(dbpool):
+            return dbpool.runInteraction(execute_sql)
+        d = self._db_ready.addCallback(when_ready)
+
         def on_error(error):
             log.warn(
                 "Failed to add participant given name '{name}' and id '{client_id}': "+
@@ -289,7 +334,10 @@ class Database:
             results = [{"id":id_, "name":name} for id_, name in rows]
             return results
 
-        d = self.dbpool.runInteraction(execute_sql)
+        def when_ready(dbpool):
+            return dbpool.runInteraction(execute_sql)
+        d = self._db_ready.addCallback(when_ready)
+
         def on_error(error):
             log.warn(
                 "Failed to get participant list: "+
@@ -358,7 +406,10 @@ class Database:
                 
             return backing_audio_ids
 
-        d = self.dbpool.runInteraction(execute_sql)
+        def when_ready(dbpool):
+            return dbpool.runInteraction(execute_sql)
+        d = self._db_ready.addCallback(when_ready)
+
         def on_error(error):
             log.warn(
                 "Failed to get backing audio ids from combination id: "+
@@ -385,7 +436,10 @@ class Database:
 
             return take_id
 
-        d = self.dbpool.runInteraction(execute_sql)
+        def when_ready(dbpool):
+            return dbpool.runInteraction(execute_sql)
+        d = self._db_ready.addCallback(when_ready)
+
         def on_error(error):
             log.warn(
                 "Failed to add take: "+
@@ -415,7 +469,10 @@ class Database:
                 audio_ids.append(audio_id)
             return audio_ids
 
-        d = self.dbpool.runInteraction(execute_sql)
+        def when_ready(dbpool):
+            return dbpool.runInteraction(execute_sql)
+        d = self._db_ready.addCallback(when_ready)
+
         def on_error(error):
             log.warn(
                 "Failed to add recordings for participants: "+

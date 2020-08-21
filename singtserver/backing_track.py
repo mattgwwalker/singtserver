@@ -191,6 +191,7 @@ class BackingTrack(resource.Resource):
 
     def _get_backing_track_json(self):
         # Get list of backing tracks from database
+        # TODO: This should be in database.py
         def execute_sql(cursor):
             cursor.execute("SELECT id, trackName FROM BackingTracks")
             rows = cursor.fetchall()
@@ -198,8 +199,10 @@ class BackingTrack(resource.Resource):
             results_json = json.dumps(results)
             print("backing track json:", results_json)
             return results_json
-            
-        d = self._db.dbpool.runInteraction(execute_sql)
+
+        def when_ready(dbpool):
+            return dbpool.runInteraction(execute_sql)
+        d = self._db._db_ready.addCallback(when_ready)
 
         def on_error(error):
             log.error("Failed to get backing track list from database:" +str(error))

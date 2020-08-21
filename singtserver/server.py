@@ -26,6 +26,7 @@ from twisted.logger import Logger, LogLevel, LogLevelFilterPredicate, \
 def start():
     # Create empty context
     context = {}
+    context["reactor"] = reactor
 
     # Create session's required directories
     session_files = SessionFiles(Path.home())
@@ -60,7 +61,7 @@ def start():
     db_filename = session_files.session_dir / "database.sqlite3"
 
     # Create the database
-    database = Database(db_filename)
+    database = Database(db_filename, context)
     session_files.set_database(database)
     context["database"] = database
 
