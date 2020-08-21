@@ -120,7 +120,13 @@ class BackingTrack(resource.Resource):
                 cursor.execute("INSERT INTO BackingTracks(audioId, trackName) VALUES (?,?);", (audio_id, name))
                 backing_track_id = cursor.lastrowid
                 return backing_track_id
-            return self._db.dbpool.runInteraction(write_to_database)
+
+            def when_ready(dbpool):
+                return dbpool.runInteraction(write_to_database)
+            d = self._db.get_dbpool()
+            d.addCallback(when_ready)
+
+            return d
             
         def on_success(backing_track_id):
             # Rename file
@@ -202,7 +208,8 @@ class BackingTrack(resource.Resource):
 
         def when_ready(dbpool):
             return dbpool.runInteraction(execute_sql)
-        d = self._db._db_ready.addCallback(when_ready)
+        d = self._db.get_dbpool()
+        d.addCallback(when_ready)
 
         def on_error(error):
             log.error("Failed to get backing track list from database:" +str(error))

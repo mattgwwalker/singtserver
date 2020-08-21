@@ -61,19 +61,20 @@ class Database:
                 log.info(f"Client database version {expected_version}")
                 return dbpool
             else:
-                log.error(f"Database version ({row[0]}) did not match expected version ({expected_version}).  Terminating.")
                 reactor = context["reactor"]
                 reactor.stop()
+                raise Exception(f"Database version ({row[0]}) did not match expected version ({expected_version}).  Terminating.")
 
         def run_check_version(dbpool):
             return dbpool.runInteraction(check_version)
-        self._db_ready.addCallback(run_check_version)
+        d = self.get_dbpool()
+        d.addCallback(run_check_version)
 
         def on_error(error):
             log.error("Failed to verify the database: "+str(error))
             reactor = context["reactor"]
             reactor.stop()
-        self._db_ready.addErrback(on_error)
+        d.addErrback(on_error)
 
         
     # Initialise the database structure from instructions in file
@@ -85,6 +86,16 @@ class Database:
         return cursor.executescript(initialisation_commands)
 
 
+    def get_dbpool(self):
+        d = defer.Deferred()
+        def db_ready(db):
+            d.callback(db)
+            return db
+        self._db_ready.addCallback(db_ready)
+    
+        return d
+
+            
     def get_combination(self, track_id=None, take_ids=[]):
         # Sanity check arguments
         if (track_id is None
@@ -160,7 +171,8 @@ class Database:
 
         def when_ready(dbpool):
             return dbpool.runInteraction(get_combo)
-        d = self._db_ready.addCallback(when_ready)
+        d = self.get_dbpool()
+        d.addCallback(when_ready)
 
         def on_success(data):
             log.info("Successfully added combination to database; combination id: "+str(data))
@@ -213,7 +225,8 @@ class Database:
 
         def when_ready(dbpool):
             return dbpool.runInteraction(add_combo)
-        d = self._db_ready.addCallback(when_ready)
+        d = self.get_dbpool()
+        d.addCallback(when_ready)
 
         def on_success(data):
             log.info("Successfully added combination to database; combination id: "+str(data))
@@ -241,7 +254,8 @@ class Database:
             
         def when_ready(dbpool):
             return dbpool.runInteraction(execute_sql)
-        d = self._db_ready.addCallback(when_ready)
+        d = self.get_dbpool()
+        d.addCallback(when_ready)
 
         def on_error(error):
             log.warn("Failed to get audio ID for track id ({track_id}): "+
@@ -266,7 +280,8 @@ class Database:
             
         def when_ready(dbpool):
             return dbpool.runInteraction(execute_sql)
-        d = self._db_ready.addCallback(when_ready)
+        d = self.get_dbpool()
+        d.addCallback(when_ready)
 
         def on_error(error):
             log.warn("Failed to get audio ID for take id ({take_id}): "+
@@ -314,7 +329,8 @@ class Database:
 
         def when_ready(dbpool):
             return dbpool.runInteraction(execute_sql)
-        d = self._db_ready.addCallback(when_ready)
+        d = self.get_dbpool()
+        d.addCallback(when_ready)
 
         def on_error(error):
             log.warn(
@@ -336,7 +352,8 @@ class Database:
 
         def when_ready(dbpool):
             return dbpool.runInteraction(execute_sql)
-        d = self._db_ready.addCallback(when_ready)
+        d = self.get_dbpool()
+        d.addCallback(when_ready)
 
         def on_error(error):
             log.warn(
@@ -408,7 +425,8 @@ class Database:
 
         def when_ready(dbpool):
             return dbpool.runInteraction(execute_sql)
-        d = self._db_ready.addCallback(when_ready)
+        d = self.get_dbpool()
+        d.addCallback(when_ready)
 
         def on_error(error):
             log.warn(
@@ -438,7 +456,8 @@ class Database:
 
         def when_ready(dbpool):
             return dbpool.runInteraction(execute_sql)
-        d = self._db_ready.addCallback(when_ready)
+        d = self.get_dbpool()
+        d.addCallback(when_ready)
 
         def on_error(error):
             log.warn(
@@ -471,7 +490,8 @@ class Database:
 
         def when_ready(dbpool):
             return dbpool.runInteraction(execute_sql)
-        d = self._db_ready.addCallback(when_ready)
+        d = self.get_dbpool()
+        d.addCallback(when_ready)
 
         def on_error(error):
             log.warn(
