@@ -1,3 +1,4 @@
+import art
 from enum import Enum
 import json
 import os
@@ -57,6 +58,12 @@ def start():
 
     # Start a logger with a namespace for a particular subsystem of our application.
     log = Logger("server")
+
+    
+    # ASCII-art title
+    title = art.text2art("Singt")
+    log.info("\n"+title)
+
 
     # Define database filename
     db_filename = session_files.session_dir / "database.sqlite3"

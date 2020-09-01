@@ -5,6 +5,7 @@ setup(name='singtserver',
       packages=["singtserver"],
       include_package_data=True,
       install_requires=[
+          "art",
           "numpy",
           "singtcommon",
           "twisted",
