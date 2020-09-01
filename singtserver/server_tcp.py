@@ -101,7 +101,7 @@ class TCPServer(protocol.Protocol):
 
             
     def connectionLost(self, reason):
-        log.info(f"Connection lost to user '{self.username}':", reason)
+        log.info(f"Connection lost to user '{self.username}': {reason}")
         self._shared_context.participants.leave(self.client_id)
 
     def send_message(self, msg):
