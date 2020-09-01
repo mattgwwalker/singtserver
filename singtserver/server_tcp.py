@@ -3,11 +3,11 @@ import struct
 
 from twisted.internet import defer
 from twisted.internet import protocol
-from twisted.logger import Logger
 
 from singtcommon import TCPPacketizer
 
 # Start a logger with a namespace for a particular subsystem of our application.
+from twisted.logger import Logger
 log = Logger("server_tcp")
 
 
@@ -101,7 +101,7 @@ class TCPServer(protocol.Protocol):
 
             
     def connectionLost(self, reason):
-        print(f"Connection lost to user '{self.username}':", reason)
+        log.info(f"Connection lost to user '{self.username}':", reason)
         self._shared_context.participants.leave(self.client_id)
 
     def send_message(self, msg):
@@ -200,7 +200,7 @@ class TCPServerFactory(protocol.Factory):
         return protocol
 
     def startFactory(self):
-        print("Server started")
+        log.info("TCPServerFactory started")
 
     def broadcast_download_request(self, audio_id, partial_url, participants):
         deferreds = []

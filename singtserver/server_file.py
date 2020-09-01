@@ -6,9 +6,15 @@ import json
 from twisted.internet import protocol
 from twisted.internet import reactor
 from twisted.internet import endpoints
+from twisted.internet import defer
 
 from singtcommon import TCPPacketizer
-from session_files import SessionFiles
+from .session_files import SessionFiles
+
+# Start a logger with a namespace for a particular subsystem of our application.
+from twisted.logger import Logger
+log = Logger("server_file")
+
 
 class FileTransportServer(protocol.Protocol):
     """Responsible for either sending or receiving one file.
@@ -25,6 +31,7 @@ class FileTransportServer(protocol.Protocol):
         self._session_files = context["session_files"]
 
     def connectionMade(self):
+        log.info("Connection made to server")
         self._packetizer = TCPPacketizer(self.transport)
         
     def connectionLost(self, reason):
@@ -41,6 +48,7 @@ class FileTransportServer(protocol.Protocol):
                 self._process_data(packet)
 
     def _process_command(self, packet):
+        print("in _process_command")
         packet = packet.decode("utf-8")
         message = json.loads(packet)
         print("Received message:", message)
@@ -82,6 +90,8 @@ class FileTransportServer(protocol.Protocol):
             print("Finished")
             self._f.close()
             self.transport.loseConnection()
+            d = self.factory.anticipate_audio_id(self._audio_id)
+            d.callback(self._audio_id)
         else:
             raise Exception("Error; unexpected packet contents.  First 10 bytes: ",packet[0:10])
         
@@ -89,19 +99,32 @@ class FileTransportServer(protocol.Protocol):
 class FileTransportServerFactory(protocol.Factory):
     def __init__(self, context):
         self._context = context
+        self._anticipated_audio_ids = {}
         
     def buildProtocol(self, addr):
+        print("Building a protocol")
         protocol = FileTransportServer(self._context)
+        protocol.factory = self
         return protocol
 
     def startFactory(self):
-        print("Server started")
+        log.info("FileTransportServerFactory started")
 
+    def anticipate_audio_id(self, audio_id):
+        # Check if audio_id is already anticipated
+        if audio_id in self._anticipated_audio_ids:
+            # Audio id already anticipated
+            return self._anticipated_audio_ids[audio_id]
+        else:
+            # Add audio id to anticipated list
+            d = defer.Deferred()
+            self._anticipated_audio_ids[audio_id] = d
+            return d
+        
 
 if __name__ == "__main__":
     # Create empty context
     context = {}
-
 
     # Create a session_files instance
     session_files = SessionFiles(Path.home() / "server_file_test")
@@ -111,7 +134,6 @@ if __name__ == "__main__":
     file_transport_server_factory = FileTransportServerFactory(context)
     
     port = 2000
-    
     endpoints.serverFromString(reactor, f"tcp:{port}").listen(file_transport_server_factory)
 
     reactor.run()

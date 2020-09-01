@@ -11,12 +11,13 @@ from twisted.internet import defer
 from twisted.internet import task
 from twisted.web import server, resource
 
-from database import Database
-from server_udp import UDPServer
-from server_tcp import TCPServerFactory
-from command import Command
-from server_web import WebServer
-from session_files import SessionFiles
+from .command import Command
+from .database import Database
+from .server_file import FileTransportServerFactory
+from .server_tcp import TCPServerFactory
+from .server_udp import UDPServer
+from .server_web import WebServer
+from .session_files import SessionFiles
 
 # Setup logging
 import sys
@@ -83,6 +84,11 @@ def start():
     command.set_tcp_server_factory(tcp_server_factory)
     context["tcp_server_factory"] = tcp_server_factory
 
+    # Create a file transfer server factory
+    file_transport_server_factory = FileTransportServerFactory(context)
+    context["file_transport_server_factory"] = file_transport_server_factory
+    
+    endpoints.serverFromString(reactor, "tcp:2000").listen(file_transport_server_factory)
     endpoints.serverFromString(reactor, "tcp:1234").listen(tcp_server_factory)
     reactor.listenUDP(12345, udp_server)
     www_port = 8080

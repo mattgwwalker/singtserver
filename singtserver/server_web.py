@@ -1,12 +1,12 @@
 import json
 
 import pkg_resources
+from singtcommon import EventSource
 from twisted.web import resource
 from twisted.web import server
 from twisted.web.static import File
 
-from backing_track import BackingTrack
-from singtcommon import EventSource
+from .backing_track import BackingTrack
 
 
 # Start a logger with a namespace for a particular subsystem of our application.

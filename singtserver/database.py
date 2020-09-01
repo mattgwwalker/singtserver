@@ -58,7 +58,7 @@ class Database:
             if row is None:
                 raise Exception("No version found in Version table of database")
             if row[0] == expected_version:
-                log.info(f"Client database version {expected_version}")
+                log.info(f"Server database version {expected_version}")
                 return dbpool
             else:
                 reactor = context["reactor"]
@@ -471,7 +471,7 @@ class Database:
         
     def add_recording_audio_ids(self, take_id, participants):
         def execute_sql(cursor):
-            audio_ids = []
+            audio_ids = {}
             for participant_id in participants:
                 # Create audio id
                 cursor.execute("INSERT INTO AudioIdentifiers DEFAULT VALUES")
@@ -485,7 +485,7 @@ class Database:
                     (audio_id, participant_id, take_id)
                 )
                 
-                audio_ids.append(audio_id)
+                audio_ids[participant_id] = audio_id
             return audio_ids
 
         def when_ready(dbpool):

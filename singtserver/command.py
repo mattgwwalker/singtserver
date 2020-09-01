@@ -216,20 +216,20 @@ class Command:
         d2.addCallback(add_recording_ids)
 
         d = gatherResults([d1, d2])
-        return d # TEMP
-        # def on_success(data):
-        #     backing_audio_ids, recording_ids = data
-        #     # Send the record command to each of the participants
-        #     return self._tcp_server_factory.broadcast_record_request(
-        #         backing_audio_ids,
-        #         recording_ids,
-        #         participants
-        #     )
-        # d.addCallback(on_success)
 
-        # def on_error(error):
-        #     log.error(f"Failed to record: {error}")
-        #     return error
-        # d.addErrback(on_error)
+        def on_success(data):
+            backing_audio_ids, recording_ids = data
+            # Send the record command to each of the participants
+            return self._tcp_server_factory.broadcast_record_request(
+                backing_audio_ids,
+                recording_ids,
+                participants
+            )
+        d.addCallback(on_success)
 
-        
+        def on_error(error):
+            log.error(f"Failed to broadcast record request: {error}")
+            return error
+        d.addErrback(on_error)
+
+        return d
