@@ -1,1 +1,2 @@
 recursive-include singtserver/www *
+include singtserver/database.sql

@@ -1,3 +1,4 @@
+import pkg_resources
 from twisted.enterprise import adbapi
 from twisted.internet import defer
 
@@ -6,8 +7,11 @@ from twisted.logger import Logger
 log = Logger("database")
 
 class Database:
-    def __init__(self, db_filename, context):
-
+    def __init__(self, context, db_filename="database.sqlite"):
+        # Get full path and filename for database
+        session_files = context["session_files"]
+        db_filename = session_files.session_dir / db_filename
+        
         # Note if database already exists
         database_exists = db_filename.is_file()
 
@@ -39,7 +43,7 @@ class Database:
                 log.info("Database successfully initialised")
                 return dbpool
             def on_error(data):
-                log.error(f"Failed to initialise the database: {data}")
+                log.error(f"Failed to initialise the server's database: {data}")
                 reactor = context["reactor"]
                 reactor.stop()
 
@@ -80,7 +84,11 @@ class Database:
     # Initialise the database structure from instructions in file
     def _initialise_database(self, cursor):
         log.info("Initialising database")
-        initialisation_commands_filename = "database.sql"
+        initialisation_commands_filename = \
+            pkg_resources.resource_filename(
+                "singtserver",
+                "database.sql"
+            )
         f = open(initialisation_commands_filename, "r")
         initialisation_commands = f.read()
         return cursor.executescript(initialisation_commands)

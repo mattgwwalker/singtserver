@@ -65,11 +65,8 @@ def start():
     log.info("\n"+title)
 
 
-    # Define database filename
-    db_filename = session_files.session_dir / "database.sqlite3"
-
     # Create the database
-    database = Database(db_filename, context)
+    database = Database(context)
     session_files.set_database(database)
     context["database"] = database
 
