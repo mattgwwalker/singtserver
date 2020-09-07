@@ -233,3 +233,4 @@ class Command:
         d.addErrback(on_error)
 
         return d
+

@@ -14,12 +14,6 @@ class SessionFiles:
         self.takes_dir.mkdir(exist_ok=True)
         self.audio_dir.mkdir(exist_ok=True)
 
-        # Database needs to be set once it's created
-        self._db = None
-
-    def set_database(self, db):
-        self._db = db
-
     def get_track_path(self, track_id):
         return self.tracks_dir / f"{track_id:03d}.opus"
 

@@ -129,18 +129,30 @@ class TCPServer(protocol.Protocol):
         self.send_message(command_json)
 
     def _command_announce(self, json_data):
-        """Announces username, which is then stored in the shared context.
-        Returns True if username is unused."""
+        """Announce client's username.
+
+        Announces username, which is then stored in the shared context
+        along with the client's ID.  
+
+        Also causes the current invitation to be sent to the client.
+
+        """
 
         # Extract the username
         print("json_data:",json_data)
         self.username = json_data["username"]
         self.client_id = int(json_data["client_id"])
 
+        # Store and announce the client
         self._shared_context.participants.join(
             self.client_id,
             self.username
         )
+
+        # Send the client the current invitation from the shared
+        # context
+        # TODO
+        
 
     def _command_update_downloaded(self, json_data):
         print("In _command_update_downloaded, with json_data: ", json_data)
@@ -177,6 +189,7 @@ class TCPServerFactory(protocol.Factory):
             self.eventsource = context["web_server"].eventsource_resource
             self.participants = Participants(context)
             self._download_results_collector = DownloadResultsCollector()
+            self.current_invitation = None
             
     def __init__(self, context):
         self._context = context
@@ -187,7 +200,6 @@ class TCPServerFactory(protocol.Factory):
         self._protocols = []
 
         # TODO: Is this really the best way to implement this?
-        eventsource = web_server.eventsource_resource
         backing_track_resource = web_server.backing_track_resource
         self._shared_context = TCPServerFactory.SharedContext(context)
         self._shared_context.eventsource.add_initialiser(
@@ -255,7 +267,6 @@ class Participants:
 
 
     def join(self, client_id, name):
-
         """Assigns name to client_id, overwriting if it exists already.
 
         Broadcasts new client on eventsource.

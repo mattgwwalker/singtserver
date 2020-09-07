@@ -17,34 +17,81 @@ from singtcommon import UDPPacketizer
 from singtcommon import AutomaticGainControl
 
 # Start a logger with a namespace for a particular subsystem of our application.
-log = Logger("backing_track")
+log = Logger("server_udp")
 
 
 class UDPServer(DatagramProtocol):
-    def __init__(self):
+    def __init__(self, context):
+        self._context = context
+        self._participants = context["participants"]
+        
         self._stream = None
         self._stream_buffer = None
-        # TEST
-        self._dropped_packets = 0
 
         reactor.callWhenRunning(self._start_audio_processing_loop, 20/1000)
 
-        self._connections = {}
+        self._connections_by_address = {}
+        self._address_by_client_id = {}
 
     def datagramReceived(self, data, addr):
-        #print("Received UDP packet from", addr)
+        # If we don't know this address, check if it's an announcement
+        # packet.
+        if addr not in self._connections_by_address:
+            self._process_announcement(data, addr)
+        else:
+            self._process_audio(data, addr)
 
-        # If we haven't already seen this address, create a new
-        # UDPPacketizer for it, otherwise get the appropriate instance
-        if addr not in self._connections:
-            packets_to_buffer = 3
-            self._connections[addr] = {
-                "udp_packetizer": UDPPacketizer(self.transport, addr),
-                # Initialise the jitter buffer
-                "jitter_buffer": JitterBuffer(packets_to_buffer)
-            }
-        udp_packetizer = self._connections[addr]["udp_packetizer"]
-        jitter_buffer = self._connections[addr]["jitter_buffer"]
+    def _process_announcement(self, data, addr):
+        print("In _process_announcement")
+        # Extract components
+        timestamp, seq_no, packet_data = UDPPacketizer.decode(data)
+        
+        # Check the sequence number is -1
+        if seq_no != -1:
+            log.warn(
+                f"Expected announcement, but sequence number was "+
+                f"{seq_no} and not -1"
+            )
+            return
+
+        # Ensure packet data has exactly eight bytes
+        if len(packet_data) != 8:
+            log.warn(
+                f"Expected announcement, but packet data had a "+
+                f"length of {len(packet_data)} bytes and not 8."
+            )
+            return
+        
+        # Extract client_id from packet_data
+        client_id = struct.unpack(">Q", packet_data)[0]
+        print("after unpack")
+        log.info(
+            f"Creating UDP connection to client id {client_id} "+
+            f"with address {addr}."
+        )
+        print("after log")
+        
+        # Create UDPPacketizer for this address
+        udp_packetizer = UDPPacketizer(self.transport, addr)
+
+        # Create a JitterBuffer for this address
+        packets_to_buffer = 3
+        jitter_buffer = JitterBuffer(packets_to_buffer)
+
+        # Store connection details
+        self._connections_by_address[addr] = {
+            "udp_packetizer": udp_packetizer,
+            "jitter_buffer": jitter_buffer
+        }
+        self._address_by_client_id[client_id] = addr
+        
+        # Announce to Participants
+        self._participants.join_udp(client_id)
+
+    def _process_audio(self, data, addr):
+        connection = self._connections_by_address[addr]
+        udp_packetizer = connection["udp_packetizer"]
+        jitter_buffer = connection["jitter_buffer"]
         
         # Extract the timestamp (4 bytes), sequence number (2 bytes),
         # and encoded frame (remainder)
@@ -85,7 +132,7 @@ class UDPServer(DatagramProtocol):
             pcms = {}
             
             # For each jitter buffer, get the next packet and send it on.
-            for address, connection in self._connections.items():
+            for address, connection in self._connections_by_address.items():
                 jitter_buffer = connection["jitter_buffer"]
                 encoded_packet = jitter_buffer.get_packet()
 

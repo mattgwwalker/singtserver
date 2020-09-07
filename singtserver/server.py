@@ -25,15 +25,11 @@ import sys
 from twisted.logger import Logger, LogLevel, LogLevelFilterPredicate, \
     textFileLogObserver, FilteringLogObserver, globalLogBeginner
 
-def start():
-    # Create empty context
-    context = {}
-    context["reactor"] = reactor
 
-    # Create session's required directories
-    session_files = SessionFiles(Path.home())
-    context["session_files"] = session_files
+# Start a logger with a namespace for a particular subsystem of our application.
+log = Logger("server")
 
+def start_logging(session_files):
     logfile = open(session_files.session_dir / "server.log", 'w')
     logtargets = []
 
@@ -56,14 +52,21 @@ def start():
     # Direct the Twisted Logger to log to both of our observers.
     globalLogBeginner.beginLoggingTo(logtargets)
 
-    # Start a logger with a namespace for a particular subsystem of our application.
-    log = Logger("server")
+def start():
+    # Create empty context
+    context = {}
+    context["reactor"] = reactor
 
+    # Create session's required directories
+    session_files = SessionFiles(Path.home())
+    context["session_files"] = session_files
+
+    # Start logging
+    start_logging(session_files)
     
     # ASCII-art title
     title = art.text2art("Singt")
     log.info("\n"+title)
-
 
     # Create the database
     database = Database(context)
