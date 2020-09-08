@@ -7,7 +7,7 @@ from twisted.web import server
 from twisted.web.static import File
 
 from .backing_track import BackingTrack
-
+from .eventsource_participants_listener import EventSourceParticipantsListener
 
 # Start a logger with a namespace for a particular subsystem of our application.
 from twisted.logger import Logger
@@ -36,6 +36,13 @@ class WebServer:
         # Event source
         self.eventsource_resource = EventSource()
         self.root.putChild(b"eventsource", self.eventsource_resource)
+
+        # Add event source as a listener of participants
+        self._event_source_participants_listener = \
+            EventSourceParticipantsListener(
+                context["participants"],
+                self.eventsource_resource
+            )
 
         # Backing tracks
         self.backing_track_resource = BackingTrack(

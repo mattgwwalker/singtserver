@@ -19,6 +19,7 @@ from .server_tcp import TCPServerFactory
 from .server_udp import UDPServer
 from .server_web import WebServer
 from .session_files import SessionFiles
+from .participants import Participants
 
 # Setup logging
 import sys
@@ -70,11 +71,14 @@ def start():
 
     # Create the database
     database = Database(context)
-    session_files.set_database(database)
     context["database"] = database
 
+    # Create a Participants list
+    participants = Participants(context)
+    context["participants"] = participants
+    
     # Create UDP server
-    udp_server = UDPServer()
+    udp_server = UDPServer(context)
     context["udp_server"] = udp_server
 
     # Create a Command instance
